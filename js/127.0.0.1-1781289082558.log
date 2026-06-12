@@ -1,8 +1,0 @@
-app.js:2063 [YOLO fallback]  Error: no available backend found. ERR: [wasm] TypeError: Failed to resolve module specifier 'js/ort-wasm-simd-threaded.jsep.mjs'
-    at br (backend-impl.ts:138:11)
-    at async e.create (inference-session-impl.ts:211:48)
-    at async Object.ensureSession (app.js:1874:20)
-    at async Object.runDeepCropUsingYOLO (app.js:2008:5)
-    at async Object.run (app.js:2052:23)
-(anonymous) @ app.js:2063
-[NEW] Explain Console errors by using Copilot in Edge: click  to explain an error. Learn moreDon't show again
