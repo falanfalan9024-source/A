@@ -1868,31 +1868,24 @@ const YOLOv8AI = {
     if (this.ready) return;
     if (!window.ort) throw new Error('ORT لم يتم تحميله');
 
-    // ensure wasm paths (must be set BEFORE InferenceSession.create)
+    // Force WASM backend + load wasm binaries from ORT CDN.
+    // This avoids local wasm module loading problems and helps with newer opsets.
     try {
+    const wasmBaseUrl = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.1/dist/';
       if (window.ort?.env?.wasm) {
-        window.ort.env.wasm.wasmPaths = 'js/';
+        window.ort.env.wasm.wasmPaths = wasmBaseUrl;
+        window.ort.env.wasm.numThreads = 1;
       } else if (window.ort?.env) {
         window.ort.env.wasm = window.ort.env.wasm || {};
-        window.ort.env.wasm.wasmPaths = 'js/';
-      }
-    } catch (e) {
-      console.warn('Failed to set ort.env.wasm.wasmPaths:', e);
-    }
-
-    // WebGL/Cpu still may trigger wasm backend modules in some ORT builds.
-    // Try webgl first (if supported), otherwise allow automatic fallback.
-    // If this still fails, caller will fallback to AutoCropCV.
-    // Prefer WASM for broader opset compatibility (e.g. Split opset 17)
-    // For heavy models you can set numThreads=1 if needed.
-    try {
-      if (window.ort?.env?.wasm) {
+        window.ort.env.wasm.wasmPaths = wasmBaseUrl;
         window.ort.env.wasm.numThreads = 1;
       }
-    } catch (_) {}
+    } catch (e) {
+      console.warn('Failed to configure ort.env.wasm:', e);
+    }
 
     this.session = await ort.InferenceSession.create(this.modelUrl, {
-      executionProviders: ['wasm']
+      executionProviders: ['wasm'],
     });
 
 
