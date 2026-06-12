@@ -1883,9 +1883,18 @@ const YOLOv8AI = {
     // WebGL/Cpu still may trigger wasm backend modules in some ORT builds.
     // Try webgl first (if supported), otherwise allow automatic fallback.
     // If this still fails, caller will fallback to AutoCropCV.
+    // Prefer WASM for broader opset compatibility (e.g. Split opset 17)
+    // For heavy models you can set numThreads=1 if needed.
+    try {
+      if (window.ort?.env?.wasm) {
+        window.ort.env.wasm.numThreads = 1;
+      }
+    } catch (_) {}
+
     this.session = await ort.InferenceSession.create(this.modelUrl, {
-      executionProviders: ['webgl']
+      executionProviders: ['wasm']
     });
+
 
 
 
