@@ -2032,14 +2032,31 @@ const YOLOv8AI = {
 
     const outputs = await this.session.run({ [inputName]: tensor });
 
+    // Log outputs structure once for debugging
+    try {
+      console.log('[YOLOv8AI] outputs keys:', Object.keys(outputs || {}));
+      const firstOut = Array.isArray(outputs) ? outputs[0] : outputs[this.outputNames?.[0]];
+      console.log('[YOLOv8AI] first output dims:', firstOut?.dims, 'dataLen:', firstOut?.data?.length);
+    } catch (_) {}
+
     // decode -> corners in original canvas coords
     const decoded = this.postprocessYOLOResults(outputs, prep.letterbox);
+
     if (!decoded?.corners || decoded.corners.length !== 4) {
-      throw new Error('YOLO لم ينتج corners صحيحة');
+      // Hard fail so caller fallback won't happen silently.
+      throw new Error('YOLO لم ينتج corners صحيحة. راجع Console لفهم شكل output.');
     }
 
-    return { corners: decoded.corners };
+    // Clamp corners inside image bounds
+    const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+    const corners = decoded.corners.map(p => ({
+      x: clamp(p.x, 0, prep.letterbox.srcW - 1),
+      y: clamp(p.y, 0, prep.letterbox.srcH - 1)
+    }));
+
+    return { corners };
   }
+
 };
 
 // Replace DeepAutoCrop.run to try YOLO first, then fallback to AutoCropCV
