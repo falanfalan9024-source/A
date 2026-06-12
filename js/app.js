@@ -2037,55 +2037,54 @@ const YOLOv8AI = {
       if (best) return { corners: best.corners, score: 0.5 };
     }
 
-    // Case C: Common YOLOv8 dense output => [1, ch, n]
-    // where ch = 5 or 4+nc or 84.
+    // Case C: YOLOv8 dense output expected dims [1, 84, 8400]
+    // where 84 = 4(box) + 1(obj/conf) + 80(classes)
+    // and data layout is [1, ch, n] => data[c*n + i]
     if (dims.length === 3 && dims[0] === 1) {
       const ch = dims[1];
       const n = dims[2];
 
-      // Expect x,y,w,h,conf plus classes (optional)
       if (n > 0 && data.length === 1 * ch * n) {
-        // We interpret layout as channel-major: data[(c*n) + i]
-        // because ONNX typically exports as [1, ch, n].
         const get = (c, i) => data[c * n + i];
 
-        // Determine nc
-        // if ch == 5 => [x,y,w,h,conf]
-        // else ch >= 6 => [x,y,w,h,conf, class0..class{nc-1}]
+        // Expected YOLO format
         const hasClasses = ch > 5;
-        const nc = hasClasses ? (ch - 5) : 0;
+        const nc = hasClasses ? (ch - 5) : 0; // for ch=84 => nc=79? (actually 80)
 
-        // Choose the best box by confidence * area
+        // If dims are exactly [1,84,8400], then nc should be 80.
+        // But some exports might set ch=81/85 depending on how they were exported.
+        // We'll still handle generically.
+
         let best = null;
         for (let i = 0; i < n; i++) {
           const cx = get(0, i);
           const cy = get(1, i);
           const bw = get(2, i);
           const bh = get(3, i);
-          const conf = get(4, i);
 
-          let score = conf;
+          const obj = get(4, i);
+
+          // Find best class score among nc classes
+          let bestClassScore = 0;
           if (hasClasses) {
-            let bestClass = -Infinity;
             for (let k = 0; k < nc; k++) {
-              const clsLogit = get(5 + k, i);
-              if (clsLogit > bestClass) bestClass = clsLogit;
+              const clsVal = get(5 + k, i);
+              // Use sigmoid to convert logits/probs to [0..1]
+              const clsProb = 1 / (1 + Math.exp(-clsVal));
+              if (clsProb > bestClassScore) bestClassScore = clsProb;
             }
-            // Some exports use raw logits, some use probabilities.
-            // Use a safe transform to keep in [0..1] range.
-            const clsProb = 1 / (1 + Math.exp(-bestClass));
-            score = conf * clsProb;
           }
 
+          const score = obj * (hasClasses ? bestClassScore : 1);
           if (score < scoreThreshold) continue;
 
           const corners = boxToCorners(cx, cy, bw, bh);
           const xs = corners.map(p => p.x);
           const ys = corners.map(p => p.y);
-          const area = (Math.max(...xs) - Math.min(...xs)) * (Math.max(...ys) - Math.min(...ys));
 
-          // prefer bigger documents
+          const area = (Math.max(...xs) - Math.min(...xs)) * (Math.max(...ys) - Math.min(...ys));
           const finalScore = area * score;
+
           if (!best || finalScore > best.finalScore) {
             best = { corners, finalScore, score };
           }
