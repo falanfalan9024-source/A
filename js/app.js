@@ -1963,30 +1963,50 @@ const YOLOv8AI = {
   // 2) boxes + 4 corners flattened: [1,N,8]
   // 3) corners heatmap/keypoints: not supported without your exact output format
   postprocessYOLOResults(outputs, letterbox, scoreThreshold = 0.25) {
-    // get first output tensor
+    // Normalize output tensor
     const outTensor = Array.isArray(outputs) ? outputs[0] : outputs;
-
-    // We don't know output name->tensor mapping here; normalize to object
     const tensorByName = outputs && typeof outputs === 'object' && !Array.isArray(outputs) ? outputs : null;
 
-    const t = tensorByName ? (outputs[this.outputNames?.[0]] || outputs[this.outputNames?.[1]] || outputs[this.outputNames?.[0]]) : outTensor;
+    const t = tensorByName
+      ? (outputs[this.outputNames?.[0]] || outputs[this.outputNames?.[1]] || outputs[this.outputNames?.[0]])
+      : outTensor;
 
-    if (!t || !t.dims || !t.data) {
-      throw new Error('شكل مخرجات YOLO غير مدعوم حالياً');
-    }
+    if (!t || !t.dims || !t.data) throw new Error('شكل مخرجات YOLO غير مدعوم حالياً');
 
-    const dims = t.dims; // e.g. [1,4,2] or [1,N,8]
+    const dims = Array.from(t.dims);
     const data = t.data;
 
+    // YOLOv8 exports commonly:
+    //  - [1, 4, 2] or [1, N, 8] (corners directly) -> handled below
+    //  - [1, 5, 8400]  (x,y,w,h,conf) per anchor (no classes) OR
+    //  - [1, 4+nc, 8400] (x,y,w,h,conf + class logits/probs)
+    //
+    // In your case: dataLen = 705600 => likely 84*8400 = 705600.
+    // That suggests dims ~= [1, 84, 8400] (nc=80)
+
     const toOriginal = (x, y) => {
-      // input coords -> src coords
-      // x,y are in letterboxed input space
       const srcX = (x - letterbox.padX) / letterbox.scale;
       const srcY = (y - letterbox.padY) / letterbox.scale;
       return { x: srcX, y: srcY };
     };
 
-    // Case 1: [1,4,2]
+    // Helper: take a box and convert to 4 corners
+    const boxToCorners = (cx, cy, w, h) => {
+      // Model space coords are typically center-x/center-y with w/h.
+      // Convert to corners in letterbox space then back to original.
+      const x1 = cx - w / 2;
+      const y1 = cy - h / 2;
+      const x2 = cx + w / 2;
+      const y2 = cy + h / 2;
+
+      const tl = toOriginal(x1, y1);
+      const tr = toOriginal(x2, y1);
+      const br = toOriginal(x2, y2);
+      const bl = toOriginal(x1, y2);
+      return [tl, tr, br, bl];
+    };
+
+    // Case A: [1,4,2] => corners directly
     if (dims.length === 3 && dims[1] === 4 && dims[2] === 2) {
       const corners = [];
       for (let i = 0; i < 4; i++) {
@@ -1997,28 +2017,87 @@ const YOLOv8AI = {
       return { corners, score: 1 };
     }
 
-    // Case 2: [1,N,8] => assume best row has 4 corners (x1,y1,...x4,y4)
+    // Case B: [1,N,8] => corners flattened
     if (dims.length === 3 && dims[2] === 8) {
       const N = dims[1];
       let best = null;
       for (let n = 0; n < N; n++) {
-        // heuristic: if model also includes score, can't know.
         const base = n * 8;
-        const corners = [];
-        // x0,y0,x1,y1,x2,y2,x3,y3
-        corners.push(toOriginal(data[base + 0], data[base + 1]));
-        corners.push(toOriginal(data[base + 2], data[base + 3]));
-        corners.push(toOriginal(data[base + 4], data[base + 5]));
-        corners.push(toOriginal(data[base + 6], data[base + 7]));
-        // compute simple score: area
-        const xs = corners.map(p => p.x), ys = corners.map(p => p.y);
+        const corners = [
+          toOriginal(data[base + 0], data[base + 1]),
+          toOriginal(data[base + 2], data[base + 3]),
+          toOriginal(data[base + 4], data[base + 5]),
+          toOriginal(data[base + 6], data[base + 7])
+        ];
+        const xs = corners.map(p => p.x);
+        const ys = corners.map(p => p.y);
         const area = (Math.max(...xs) - Math.min(...xs)) * (Math.max(...ys) - Math.min(...ys));
         if (!best || area > best.area) best = { corners, area };
       }
-      if (best && best.corners && best.corners.length === 4) return { corners: best.corners, score: 0.5 };
+      if (best) return { corners: best.corners, score: 0.5 };
     }
 
-    throw new Error('لم أستطع تفسير output tensor لهذا الموديل. راجع Console (output names/dims).');
+    // Case C: Common YOLOv8 dense output => [1, ch, n]
+    // where ch = 5 or 4+nc or 84.
+    if (dims.length === 3 && dims[0] === 1) {
+      const ch = dims[1];
+      const n = dims[2];
+
+      // Expect x,y,w,h,conf plus classes (optional)
+      if (n > 0 && data.length === 1 * ch * n) {
+        // We interpret layout as channel-major: data[(c*n) + i]
+        // because ONNX typically exports as [1, ch, n].
+        const get = (c, i) => data[c * n + i];
+
+        // Determine nc
+        // if ch == 5 => [x,y,w,h,conf]
+        // else ch >= 6 => [x,y,w,h,conf, class0..class{nc-1}]
+        const hasClasses = ch > 5;
+        const nc = hasClasses ? (ch - 5) : 0;
+
+        // Choose the best box by confidence * area
+        let best = null;
+        for (let i = 0; i < n; i++) {
+          const cx = get(0, i);
+          const cy = get(1, i);
+          const bw = get(2, i);
+          const bh = get(3, i);
+          const conf = get(4, i);
+
+          let score = conf;
+          if (hasClasses) {
+            let bestClass = -Infinity;
+            for (let k = 0; k < nc; k++) {
+              const clsLogit = get(5 + k, i);
+              if (clsLogit > bestClass) bestClass = clsLogit;
+            }
+            // Some exports use raw logits, some use probabilities.
+            // Use a safe transform to keep in [0..1] range.
+            const clsProb = 1 / (1 + Math.exp(-bestClass));
+            score = conf * clsProb;
+          }
+
+          if (score < scoreThreshold) continue;
+
+          const corners = boxToCorners(cx, cy, bw, bh);
+          const xs = corners.map(p => p.x);
+          const ys = corners.map(p => p.y);
+          const area = (Math.max(...xs) - Math.min(...xs)) * (Math.max(...ys) - Math.min(...ys));
+
+          // prefer bigger documents
+          const finalScore = area * score;
+          if (!best || finalScore > best.finalScore) {
+            best = { corners, finalScore, score };
+          }
+        }
+
+        if (best && best.corners && best.corners.length === 4) {
+          return { corners: best.corners, score: best.score };
+        }
+      }
+    }
+
+    throw new Error('لم أستطع تفسير output tensor لهذا الموديل. dims=' + JSON.stringify(dims));
   },
 
   async runDeepCropUsingYOLO() {
