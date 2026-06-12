@@ -130,10 +130,10 @@
     </div>
 
     <div class="navbar-actions">
-      <button class="btn btn-ghost btn-sm" onclick="newFile()">
+  <button class="btn btn-ghost btn-sm" onclick="newFile()" title="إنشاء وثيقة جديدة" aria-label="وثيقة جديدة">
         <i class="fas fa-plus"></i> وثيقة جديدة
       </button>
-      <button class="btn btn-primary btn-sm" data-requires-image onclick="downloadCurrentDocument()">
+      <button class="btn btn-primary btn-sm" data-requires-image onclick="downloadCurrentDocument()" title="تصدير/تنزيل المستند" aria-label="تصدير المستند">
         <i class="fas fa-download"></i> تصدير
       </button>
     </div>
@@ -481,10 +481,10 @@
             <span class="format-tag">BMP</span>
             <span class="format-tag">GIF</span>
           </div>
-          <button class="btn btn-primary btn-lg" onclick="$('fileInput').click();event.stopPropagation()">
+          <button class="btn btn-primary btn-lg" onclick="$('fileInput').click();event.stopPropagation()" title="اختيار صورة" aria-label="اختيار صورة">
             <i class="fas fa-folder-open"></i> اختر صورة
           </button>
-          <input type="file" id="fileInput" accept="image/*" style="display:none" />
+          <input type="file" id="fileInput" accept="image/*" style="display:none" aria-label="ملف الصورة" />
         </div>
 
         <!-- Canvas Container -->
