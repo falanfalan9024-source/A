@@ -1871,7 +1871,7 @@ const YOLOv8AI = {
     // Force WASM backend + load wasm binaries from ORT CDN.
     // This avoids local wasm module loading problems and helps with newer opsets.
     try {
-    const wasmBaseUrl = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.1/dist/';
+      const wasmBaseUrl = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.0/dist/';
       if (window.ort?.env?.wasm) {
         window.ort.env.wasm.wasmPaths = wasmBaseUrl;
         window.ort.env.wasm.numThreads = 1;
