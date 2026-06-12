@@ -1884,7 +1884,8 @@ const YOLOv8AI = {
       console.warn('Failed to configure ort.env.wasm:', e);
     }
 
-    this.session = await ort.InferenceSession.create(this.modelUrl, {
+    // Important: use the global ort reference to ensure consistent env config
+    this.session = await window.ort.InferenceSession.create(this.modelUrl, {
       executionProviders: ['wasm'],
     });
 
