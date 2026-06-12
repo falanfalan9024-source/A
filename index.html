@@ -1,0 +1,746 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description"
+    content="DocCropper - منصة قص ومعالجة المستمسكات والوثائق الذكية تلقائياً بالذكاء الاصطناعي" />
+  <meta name="theme-color" content="#0a0b0f" />
+  <meta name="robots" content="noindex" />
+  <!-- Inline SVG favicon - eliminates 404 console error -->
+  <link rel="icon" type="image/svg+xml"
+    href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%236366f1'/><text y='.9em' font-size='80' x='10'>✦</text></svg>" />
+  <title>DocCropper - منصة قص المستمسكات والوثائق الذكية</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&family=Tajawal:wght@300;400;500;700;800;900&display=swap"
+    rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+  <link rel="stylesheet" href="css/style.css" />
+  <style>
+    /* ── AI Auto Crop Button ── */
+    .btn-ai {
+      background: linear-gradient(135deg, #6366f1, #8b5cf6, #06b6d4);
+      background-size: 200% 200%;
+      animation: shimmerBg 3s ease infinite;
+      color: white;
+      font-weight: 700;
+      border: none;
+      box-shadow: 0 4px 20px rgba(99, 102, 241, 0.4);
+    }
+
+    .btn-ai:hover {
+      box-shadow: 0 6px 28px rgba(99, 102, 241, 0.6);
+      transform: translateY(-2px);
+    }
+
+    .btn-ai:active {
+      transform: translateY(0);
+    }
+
+    @keyframes shimmerBg {
+
+      0%,
+      100% {
+        background-position: 0% 50%;
+      }
+
+      50% {
+        background-position: 100% 50%;
+      }
+    }
+
+    /* Step progress */
+    #cvProgressWrap {
+      display: none;
+      flex-direction: column;
+      gap: 6px;
+      padding: 10px;
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      font-size: 0.72rem;
+    }
+
+    #cvProgressBar {
+      height: 4px;
+      border-radius: 99px;
+      background: linear-gradient(90deg, #6366f1, #06b6d4);
+      transition: width 0.3s;
+    }
+
+    #cvProgressTrack {
+      height: 4px;
+      background: var(--bg-hover);
+      border-radius: 99px;
+      overflow: hidden;
+    }
+
+    #cvProgressMsg {
+      color: var(--text-secondary);
+      font-size: 0.68rem;
+    }
+
+    /* Detected corners overlay canvas */
+    #autoCropOverlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      pointer-events: none;
+      z-index: 30;
+    }
+
+    /* Preview actions */
+    #cvActionBar {
+      display: none;
+      gap: 6px;
+    }
+  </style>
+</head>
+
+<body>
+
+  <!-- ===== SKIP LINK for Accessibility ===== -->
+  <a href="#canvasArea" class="skip-link"
+    style="position:fixed;top:-100px;left:50%;transform:translateX(-50%);background:var(--accent);color:white;padding:8px 16px;border-radius:8px;z-index:9999;font-weight:600;transition:top 0.2s;"
+    onfocus="this.style.top='8px'" onblur="this.style.top='-100px'">انتقل إلى منطقة العمل</a>
+
+  <!-- ===== NAVBAR ===== -->
+  <nav class="navbar" role="navigation" aria-label="شريط التنقل">
+    <a href="#" class="navbar-brand">
+      <div class="brand-icon">✦</div>
+      <span class="brand-name">DocCropper</span>
+      <span class="brand-badge">AI</span>
+    </a>
+
+    <!-- Tab Navigation -->
+    <div class="tabs-nav" role="tablist">
+      <button class="tab-btn active" data-tab="crop" role="tab" aria-selected="true">
+        <i class="fas fa-crop"></i> كشف وقص الوثيقة
+      </button>
+      <button class="tab-btn" data-tab="adjust" role="tab" aria-selected="false">
+        <i class="fas fa-sliders"></i> التعديل والتدوير
+      </button>
+      <button class="tab-btn" data-tab="filters" role="tab" aria-selected="false">
+        <i class="fas fa-magic"></i> فلاتر المسح الضوئي
+      </button>
+    </div>
+
+    <div class="navbar-actions">
+      <button class="btn btn-ghost btn-sm" onclick="newFile()">
+        <i class="fas fa-plus"></i> وثيقة جديدة
+      </button>
+      <button class="btn btn-primary btn-sm" data-requires-image onclick="downloadCurrentDocument()">
+        <i class="fas fa-download"></i> تصدير
+      </button>
+    </div>
+  </nav>
+
+  <!-- ===== MAIN LAYOUT ===== -->
+  <main class="main-container">
+
+    <!-- ===== LEFT SIDEBAR ===== -->
+    <aside class="sidebar-left">
+
+      <!-- TAB: SMART CROP & DETECTION -->
+      <div class="tab-content" id="tab_crop">
+
+        <!-- Panel: Crop Mode -->
+        <div class="panel-card open">
+          <div class="panel-header" onclick="togglePanel(this)">
+            <div class="panel-header-left">
+              <div class="panel-icon icon-purple"><i class="fas fa-crop-simple"></i></div>
+              <div>
+                <div class="panel-title">وضع القص والكشف</div>
+                <div class="panel-subtitle">اختر الكشف التلقائي أو التحديد اليدوي</div>
+              </div>
+            </div>
+            <i class="fas fa-chevron-down panel-chevron"></i>
+          </div>
+          <div class="panel-body">
+            <div class="toggle-row" style="margin-bottom: 8px;">
+              <span class="toggle-label" style="font-weight:600;">الكشف التلقائي الذكي</span>
+              <label class="toggle">
+                <input type="checkbox" id="toggleCropMode" checked onchange="toggleCropMode(this)" />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            <!-- Auto Crop Settings -->
+            <div id="autoCropSettings" style="display:flex; flex-direction:column; gap:12px;">
+              <div class="slider-group">
+                <div class="slider-label">
+                  <span class="slider-name">نوع خلفية الصورة</span>
+                </div>
+                <select id="bgTypeSelect" class="tool-btn"
+                  style="width:100%; border-radius:8px; padding:8px; background:var(--bg-hover); color:var(--text-primary); border:1px solid var(--border);"
+                  onchange="redetect()">
+                  <option value="auto">كشف تلقائي للخلفية 🔍</option>
+                  <option value="white">خلفية بيضاء / فاتحة ⬜</option>
+                  <option value="dark">خلفية سوداء / داكنة ⬛</option>
+                </select>
+              </div>
+
+              <div class="slider-group">
+                <div class="slider-label">
+                  <span class="slider-name">حساسية الكشف عن الحواف</span>
+                  <span class="slider-value" id="sensVal">20</span>
+                </div>
+                <input type="range" class="slider" id="cropSens" min="5" max="60" value="20"
+                  oninput="$('sensVal').textContent=this.value; redetect()" />
+              </div>
+
+              <button class="btn btn-secondary btn-full btn-sm" onclick="redetect()">
+                <i class="fas fa-rotate"></i> إعادة الكشف التلقائي
+              </button>
+            </div>
+
+            <!-- ═══ AI Deep Crop Button ═══ -->
+            <div class="sep"></div>
+            <button class="btn btn-ai btn-full btn-sm" data-requires-image id="btnDeepCrop" onclick="runDeepAutoCrop()">
+              <i class="fas fa-wand-magic-sparkles"></i> ابدأ القص التلقائي بالذكاء الاصطناعي
+            </button>
+
+            <!-- Progress during detection -->
+            <div id="cvProgressWrap">
+              <div style="display:flex;justify-content:space-between;align-items:center">
+                <span style="font-weight:600;color:var(--text-primary);font-size:0.72rem">جارٍ التحليل...</span>
+                <span id="cvProgressPct" style="color:var(--accent);font-weight:700;font-family:monospace">0%</span>
+              </div>
+              <div id="cvProgressTrack">
+                <div id="cvProgressBar" style="width:0%"></div>
+              </div>
+              <div id="cvProgressMsg"></div>
+            </div>
+
+            <!-- After detection: Apply / Cancel buttons -->
+            <div id="cvActionBar" style="display:none;gap:6px;flex-direction:column">
+              <div
+                style="background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.3);border-radius:8px;padding:8px;font-size:0.72rem;color:#10b981;text-align:center">
+                <i class="fas fa-check-circle"></i> تم الكشف عن الوثيقة — راجع الإطار البنفسجي
+              </div>
+              <div style="display:flex;gap:6px">
+                <button class="btn btn-success" style="flex:1" onclick="applyDeepCrop()">
+                  <i class="fas fa-crop"></i> تطبيق وتصحيح المنظور
+                </button>
+                <button class="btn btn-ghost" onclick="cancelDeepCrop()">
+                  <i class="fas fa-times"></i>
+                </button>
+              </div>
+            </div>
+
+            <!-- Manual Crop Hints -->
+            <div id="manualCropSettings"
+              style="display:none; font-size:0.78rem; color:var(--text-secondary); line-height:1.5;">
+              <i class="fas fa-info-circle" style="color:var(--accent)"></i>
+              اسحب المقابض البنفسجية المضيئة حول الصورة لتحديد أطراف وثيقتك يدوياً بدقة.
+            </div>
+          </div>
+        </div>
+
+        <!-- Panel: Dimensions & Ratio Lock -->
+        <div class="panel-card">
+          <div class="panel-header" onclick="togglePanel(this)">
+            <div class="panel-header-left">
+              <div class="panel-icon icon-blue"><i class="fas fa-expand"></i></div>
+              <div>
+                <div class="panel-title">تثبيت نسبة الأبعاد</div>
+                <div class="panel-subtitle">قص مناسب للمستندات الرسمية</div>
+              </div>
+            </div>
+            <i class="fas fa-chevron-down panel-chevron"></i>
+          </div>
+          <div class="panel-body">
+            <div class="tool-group" style="grid-template-columns: 1fr 1fr; display: grid; gap: 6px;">
+              <button class="tool-btn active" id="ratio-free" onclick="setAspectRatioLock(null, 'ratio-free')">
+                <i class="fas fa-vector-square"></i> حر (تلقائي)
+              </button>
+              <button class="tool-btn" id="ratio-square" onclick="setAspectRatioLock('1:1', 'ratio-square')">
+                <i class="fas fa-square"></i> مربع 1:1
+              </button>
+              <button class="tool-btn" id="ratio-idcard" onclick="setAspectRatioLock('8.5:5.4', 'ratio-idcard')">
+                <i class="fas fa-address-card"></i> بطاقة هوية
+              </button>
+              <button class="tool-btn" id="ratio-passport" onclick="setAspectRatioLock('7:10', 'ratio-passport')">
+                <i class="fas fa-passport"></i> جواز سفر
+              </button>
+              <button class="tool-btn" id="ratio-a4" onclick="setAspectRatioLock('1:1.414', 'ratio-a4')">
+                <i class="fas fa-file-lines"></i> ورقة A4
+              </button>
+            </div>
+
+            <div
+              style="background:var(--bg-panel); border:1px solid var(--border); border-radius:8px; padding:10px; text-align:center; margin-top:6px;">
+              <div style="font-size:0.72rem; color:var(--text-muted); margin-bottom:4px;">أبعاد منطقة القص الحالية</div>
+              <div style="font-size:0.95rem; font-weight:700; color:var(--accent); font-family:monospace;"
+                id="cropDimDisplay">
+                — × — px
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Panel: Execution Actions -->
+        <div class="panel-card open">
+          <div class="panel-header" onclick="togglePanel(this)">
+            <div class="panel-header-left">
+              <div class="panel-icon icon-green"><i class="fas fa-check"></i></div>
+              <div>
+                <div class="panel-title">إجراءات القص</div>
+              </div>
+            </div>
+            <i class="fas fa-chevron-down panel-chevron"></i>
+          </div>
+          <div class="panel-body">
+            <button class="btn btn-success btn-full btn-lg" data-requires-image onclick="applyDocCrop()">
+              <i class="fas fa-crop"></i> تطبيق القص المحدد
+            </button>
+            <div class="sep"></div>
+            <div style="display:flex; gap:6px;">
+              <button class="btn btn-ghost" style="flex:1" data-requires-image onclick="cancelDocCrop()">
+                إلغاء التحديد
+              </button>
+              <button class="btn btn-danger" style="flex:1" data-requires-image onclick="AutoCrop.resetToOriginal()">
+                استعادة الأصل
+              </button>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- /tab_crop -->
+
+      <!-- TAB: PROCESS & ROTATE -->
+      <div class="tab-content" id="tab_adjust" style="display:none">
+
+        <!-- Panel: Orientation -->
+        <div class="panel-card open">
+          <div class="panel-header" onclick="togglePanel(this)">
+            <div class="panel-header-left">
+              <div class="panel-icon icon-orange"><i class="fas fa-rotate"></i></div>
+              <div>
+                <div class="panel-title">اتجاه وثيقتك</div>
+                <div class="panel-subtitle">تعديل اتجاه الصورة والدوران</div>
+              </div>
+            </div>
+            <i class="fas fa-chevron-down panel-chevron"></i>
+          </div>
+          <div class="panel-body">
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:6px;">
+              <button class="btn btn-secondary btn-sm" data-requires-image onclick="rotateImage(-90)">
+                <i class="fas fa-arrow-rotate-left"></i> 90° لليسار
+              </button>
+              <button class="btn btn-secondary btn-sm" data-requires-image onclick="rotateImage(90)">
+                <i class="fas fa-arrow-rotate-right"></i> 90° لليمين
+              </button>
+              <button class="btn btn-secondary btn-sm" data-requires-image onclick="flipImage('h')">
+                <i class="fas fa-arrows-left-right"></i> عكس أفقي
+              </button>
+              <button class="btn btn-secondary btn-sm" data-requires-image onclick="flipImage('v')">
+                <i class="fas fa-arrows-up-down"></i> عكس رأسي
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Panel: Adjustment sliders -->
+        <div class="panel-card open">
+          <div class="panel-header" onclick="togglePanel(this)">
+            <div class="panel-header-left">
+              <div class="panel-icon icon-purple"><i class="fas fa-sliders-h"></i></div>
+              <div>
+                <div class="panel-title">الضبط اليدوي والوضوح</div>
+                <div class="panel-subtitle">تحسين قراءة نصوص المستند</div>
+              </div>
+            </div>
+            <i class="fas fa-chevron-down panel-chevron"></i>
+          </div>
+          <div class="panel-body">
+            <div class="slider-group">
+              <div class="slider-label">
+                <span class="slider-name"><i class="fas fa-sun"></i> السطوع</span>
+                <span class="slider-value" id="val_brightness">0</span>
+              </div>
+              <input type="range" class="slider" id="slider_brightness" />
+            </div>
+            <div class="slider-group">
+              <div class="slider-label">
+                <span class="slider-name"><i class="fas fa-circle-half-stroke"></i> التباين</span>
+                <span class="slider-value" id="val_contrast">0</span>
+              </div>
+              <input type="range" class="slider" id="slider_contrast" />
+            </div>
+            <div class="slider-group">
+              <div class="slider-label">
+                <span class="slider-name"><i class="fas fa-bolt"></i> مستوى التعريض</span>
+                <span class="slider-value" id="val_exposure">0</span>
+              </div>
+              <input type="range" class="slider" id="slider_exposure" />
+            </div>
+            <div class="slider-group">
+              <div class="slider-label">
+                <span class="slider-name"><i class="fas fa-wand-magic-sparkles"></i> حدة النصوص</span>
+                <span class="slider-value" id="val_sharpness">0</span>
+              </div>
+              <input type="range" class="slider" id="slider_sharpness" min="0" max="100" value="0"
+                oninput="updateSharpnessUI(this.value)" onchange="applySharpnessChange()" />
+            </div>
+            <div class="sep"></div>
+            <button class="btn btn-ghost btn-full btn-sm" onclick="ColorTools.reset()">
+              <i class="fas fa-undo"></i> إعادة ضبط الألوان
+            </button>
+          </div>
+        </div>
+
+      </div><!-- /tab_adjust -->
+
+      <!-- TAB: SCAN FILTERS -->
+      <div class="tab-content" id="tab_filters" style="display:none">
+
+        <div class="panel-card open">
+          <div class="panel-header" onclick="togglePanel(this)">
+            <div class="panel-header-left">
+              <div class="panel-icon icon-pink"><i class="fas fa-magic"></i></div>
+              <div>
+                <div class="panel-title">فلاتر تصفية المستندات</div>
+                <div class="panel-subtitle">تأثيرات معالجة المستندات بلمسة واحدة</div>
+              </div>
+            </div>
+            <i class="fas fa-chevron-down panel-chevron"></i>
+          </div>
+          <div class="panel-body">
+            <p style="font-size:0.75rem; color:var(--text-muted); line-height:1.5; margin-bottom:4px;">
+              اختر فلتر التحسين المناسب لنوع وجودة مستندك:
+            </p>
+
+            <div style="display:flex; flex-direction:column; gap:10px;">
+              <!-- Filter Option: Original -->
+              <div class="export-option selected" id="filter-orig" onclick="applyScanFilter('original')"
+                style="display:flex; align-items:center; text-align:right; gap:12px; padding:10px;">
+                <div class="export-icon" style="margin-bottom:0; font-size:1.2rem;">🖼️</div>
+                <div style="flex:1;">
+                  <div class="export-name" style="font-size:0.83rem;">الصورة الأصلية</div>
+                  <div class="export-desc" style="font-size:0.67rem;">المستند كما تم تصويره بدون معالجة</div>
+                </div>
+              </div>
+
+              <!-- Filter Option: Scan Enhancer -->
+              <div class="export-option" id="filter-enhance" onclick="applyScanFilter('enhance')"
+                style="display:flex; align-items:center; text-align:right; gap:12px; padding:10px;">
+                <div class="export-icon" style="margin-bottom:0; font-size:1.2rem;">✨</div>
+                <div style="flex:1;">
+                  <div class="export-name" style="font-size:0.83rem;">تحسين المسح الضوئي (Magic Color)</div>
+                  <div class="export-desc" style="font-size:0.67rem;">يفتح الخلفية ويزيد من وضوح نصوص الألوان</div>
+                </div>
+              </div>
+
+              <!-- Filter Option: B&W Binary -->
+              <div class="export-option" id="filter-bw" onclick="applyScanFilter('bw')"
+                style="display:flex; align-items:center; text-align:right; gap:12px; padding:10px;">
+                <div class="export-icon" style="margin-bottom:0; font-size:1.2rem;">📠</div>
+                <div style="flex:1;">
+                  <div class="export-name" style="font-size:0.83rem;">أبيض وأسود داكن (B&W Copy)</div>
+                  <div class="export-desc" style="font-size:0.67rem;">تصفية الخلفية تماماً وحفظ النص بالأسود للطباعة
+                  </div>
+                </div>
+              </div>
+
+              <!-- Filter Option: Grayscale -->
+              <div class="export-option" id="filter-gray" onclick="applyScanFilter('gray')"
+                style="display:flex; align-items:center; text-align:right; gap:12px; padding:10px;">
+                <div class="export-icon" style="margin-bottom:0; font-size:1.2rem;">🔘</div>
+                <div style="flex:1;">
+                  <div class="export-name" style="font-size:0.83rem;">تدرج الرمادي (Grayscale)</div>
+                  <div class="export-desc" style="font-size:0.67rem;">إزالة كافة الألوان لجعل الوثيقة رسمية رمادية</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- /tab_filters -->
+
+    </aside>
+
+    <!-- ===== CENTER CANVAS ===== -->
+    <section class="canvas-area" id="canvasArea">
+      <div class="canvas-bg-pattern"></div>
+
+      <div class="canvas-wrapper" id="canvasWrapper">
+        <!-- Upload Zone -->
+        <div class="upload-zone" id="uploadZone">
+          <div class="upload-icon"><i class="fas fa-cloud-arrow-up"></i></div>
+          <div class="upload-title">ارفع صورتك هنا</div>
+          <div class="upload-sub">اسحب وأفلت أو اضغط للاختيار</div>
+          <div class="upload-formats">
+            <span class="format-tag">PNG</span>
+            <span class="format-tag">JPG</span>
+            <span class="format-tag">WEBP</span>
+            <span class="format-tag">BMP</span>
+            <span class="format-tag">GIF</span>
+          </div>
+          <button class="btn btn-primary btn-lg" onclick="$('fileInput').click();event.stopPropagation()">
+            <i class="fas fa-folder-open"></i> اختر صورة
+          </button>
+          <input type="file" id="fileInput" accept="image/*" style="display:none" />
+        </div>
+
+        <!-- Canvas Container -->
+        <div id="canvasContainer"
+          style="display:none;position:relative;flex:1;align-items:center;justify-content:center;width:100%;height:100%;overflow:hidden;padding-bottom:44px;">
+          <div class="loading-overlay" id="loadingOverlay">
+            <div class="loading-spinner"></div>
+            <div class="loading-text">جارٍ المعالجة...</div>
+          </div>
+          <div id="cropCanvasWrapper"
+            style="position:relative;display:inline-block;line-height:0;max-width:100%;max-height:calc(100vh - 200px);">
+            <canvas id="mainCanvas" role="img" aria-label="لوحة تحرير الصورة" tabindex="0"
+              style="max-width:100%;max-height:calc(100vh - 250px);object-fit:contain;display:block;"></canvas>
+            <canvas id="autoCropOverlay"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- Progress Bar -->
+      <div class="progress-container" id="progressContainer">
+        <div class="progress-label">
+          <span class="progress-text" id="progressText">جارٍ المعالجة...</span>
+          <span class="progress-pct" id="progressPct">0%</span>
+        </div>
+        <div class="progress-bar-track">
+          <div class="progress-bar-fill" id="progressBar"></div>
+        </div>
+      </div>
+
+      <!-- Canvas Info Bar -->
+      <div class="canvas-info-bar">
+        <div style="display:flex;gap:16px;align-items:center">
+          <span id="infoFileName" style="color:var(--text-secondary)">لم يتم تحميل صورة</span>
+        </div>
+        <div class="zoom-controls" role="group" aria-label="أدوات التكبير">
+          <button class="btn btn-ghost btn-sm" onclick="Zoom.out()" title="تصغير" aria-label="تصغير الصورة">
+            <i class="fas fa-minus" aria-hidden="true"></i>
+          </button>
+          <span class="zoom-display" id="zoomDisplay" aria-live="polite" aria-label="مستوى التكبير">100%</span>
+          <button class="btn btn-ghost btn-sm" onclick="Zoom.in()" title="تكبير" aria-label="تكبير الصورة">
+            <i class="fas fa-plus" aria-hidden="true"></i>
+          </button>
+          <button class="btn btn-ghost btn-sm" onclick="Zoom.reset()" title="إعادة ضبط" aria-label="إعادة ضبط التكبير">
+            <i class="fas fa-expand" aria-hidden="true"></i>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== RIGHT SIDEBAR ===== -->
+    <aside class="sidebar-right">
+
+      <!-- Status -->
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0 8px;">
+        <div class="section-heading">معلومات الصورة</div>
+        <div class="status-badge badge-ready" id="statusBadge">
+          <div class="status-dot"></div>
+          جاهز
+        </div>
+      </div>
+
+      <!-- Image Info -->
+      <div class="panel-card">
+        <div class="panel-header" onclick="togglePanel(this)">
+          <div class="panel-header-left">
+            <div class="panel-icon icon-blue"><i class="fas fa-image"></i></div>
+            <div>
+              <div class="panel-title">تفاصيل الصورة</div>
+            </div>
+          </div>
+          <i class="fas fa-chevron-down panel-chevron"></i>
+        </div>
+        <div class="panel-body">
+          <div class="info-grid">
+            <div class="info-item">
+              <div class="info-key">العرض</div>
+              <div class="info-val" id="infoWidth">—</div>
+            </div>
+            <div class="info-item">
+              <div class="info-key">الارتفاع</div>
+              <div class="info-val" id="infoHeight">—</div>
+            </div>
+            <div class="info-item">
+              <div class="info-key">الحجم</div>
+              <div class="info-val" id="infoSize">—</div>
+            </div>
+            <div class="info-item">
+              <div class="info-key">النوع</div>
+              <div class="info-val" id="infoType">—</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- History -->
+      <div class="panel-card">
+        <div class="panel-header" onclick="togglePanel(this)">
+          <div class="panel-header-left">
+            <div class="panel-icon icon-orange"><i class="fas fa-clock-rotate-left"></i></div>
+            <div>
+              <div class="panel-title">سجل العمليات</div>
+              <div class="panel-subtitle">Undo / Redo</div>
+            </div>
+          </div>
+          <i class="fas fa-chevron-down panel-chevron"></i>
+        </div>
+        <div class="panel-body">
+          <div class="tool-group">
+            <button class="btn btn-ghost btn-sm" id="btnUndo" onclick="History.undo()" disabled title="Ctrl+Z">
+              <i class="fas fa-rotate-left"></i> تراجع (Z)
+            </button>
+            <button class="btn btn-ghost btn-sm" id="btnRedo" onclick="History.redo()" disabled title="Ctrl+Y">
+              <i class="fas fa-rotate-right"></i> تقدم (Y)
+            </button>
+          </div>
+          <div class="history-list" id="historyList">
+            <div style="color:var(--text-muted);font-size:0.78rem;padding:8px 0">لا توجد عمليات</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Export -->
+      <div class="panel-card open">
+        <div class="panel-header" onclick="togglePanel(this)">
+          <div class="panel-header-left">
+            <div class="panel-icon icon-green"><i class="fas fa-file-export"></i></div>
+            <div>
+              <div class="panel-title">تصدير وحفظ المستند</div>
+              <div class="panel-subtitle">تصدير كصورة، ملف PDF، أو طباعة</div>
+            </div>
+          </div>
+          <i class="fas fa-chevron-down panel-chevron"></i>
+        </div>
+        <div class="panel-body">
+          <div class="export-list">
+            <div class="export-card selected" data-format="png" id="exp-png" onclick="Exporter.select('png')">
+              <div class="export-card-icon"><i class="fas fa-file-image"></i></div>
+              <div class="export-card-info">
+                <div class="export-card-title">حفظ بصيغة PNG</div>
+                <div class="export-card-desc">تصدير بجودة كاملة ودعم الشفافية</div>
+              </div>
+              <div class="export-card-indicator"></div>
+            </div>
+            <div class="export-card" data-format="jpeg" id="exp-jpeg" onclick="Exporter.select('jpeg')">
+              <div class="export-card-icon"><i class="fas fa-images"></i></div>
+              <div class="export-card-info">
+                <div class="export-card-title">حفظ بصيغة JPG</div>
+                <div class="export-card-desc">تصدير بحجم مضغوط ومناسب للمشاركة</div>
+              </div>
+              <div class="export-card-indicator"></div>
+            </div>
+            <div class="export-card" data-format="pdf" id="exp-pdf" onclick="Exporter.select('pdf')">
+              <div class="export-card-icon"><i class="fas fa-file-pdf"></i></div>
+              <div class="export-card-info">
+                <div class="export-card-title">حفظ بصيغة PDF</div>
+                <div class="export-card-desc">تصدير كملف مستند جاهز للطباعة الفورية</div>
+              </div>
+              <div class="export-card-indicator"></div>
+            </div>
+          </div>
+
+          <div class="slider-group" id="exportQualityGroup" style="display: none;">
+            <div class="slider-label">
+              <span class="slider-name">جودة الصورة</span>
+              <span class="slider-value" id="exportQualityVal">95%</span>
+            </div>
+            <input type="range" class="slider" id="exportQuality" min="10" max="100" value="95"
+              oninput="$('exportQualityVal').textContent = this.value + '%'" />
+          </div>
+
+          <button class="btn btn-primary btn-full btn-lg" data-requires-image onclick="downloadCurrentDocument()">
+            <i class="fas fa-download"></i> تحميل المستند
+          </button>
+          <button class="btn btn-success btn-full" data-requires-image onclick="printCurrentDocument()">
+            <i class="fas fa-print"></i> طباعة الوثيقة المقصوصة
+          </button>
+          <button class="btn btn-secondary btn-full" data-requires-image onclick="Exporter.copyToClipboard()">
+            <i class="fas fa-copy"></i> نسخ كصورة للحافظة
+          </button>
+        </div>
+      </div>
+
+      <!-- Keyboard shortcuts -->
+      <div class="panel-card">
+        <div class="panel-header" onclick="togglePanel(this)">
+          <div class="panel-header-left">
+            <div class="panel-icon icon-purple"><i class="fas fa-keyboard"></i></div>
+            <div>
+              <div class="panel-title">اختصارات لوحة المفاتيح</div>
+            </div>
+          </div>
+          <i class="fas fa-chevron-down panel-chevron"></i>
+        </div>
+        <div class="panel-body">
+          <div style="display:flex;flex-direction:column;gap:6px;font-size:0.75rem;color:var(--text-muted)">
+            <div style="display:flex;justify-content:space-between"><span>تراجع</span><kbd
+                style="background:var(--bg-hover);padding:2px 8px;border-radius:4px;color:var(--accent)">Ctrl+Z</kbd>
+            </div>
+            <div style="display:flex;justify-content:space-between"><span>تقدم</span><kbd
+                style="background:var(--bg-hover);padding:2px 8px;border-radius:4px;color:var(--accent)">Ctrl+Y</kbd>
+            </div>
+            <div style="display:flex;justify-content:space-between"><span>تصدير</span><kbd
+                style="background:var(--bg-hover);padding:2px 8px;border-radius:4px;color:var(--accent)">Ctrl+S</kbd>
+            </div>
+            <div style="display:flex;justify-content:space-between"><span>تكبير</span><kbd
+                style="background:var(--bg-hover);padding:2px 8px;border-radius:4px;color:var(--accent)">Ctrl++</kbd>
+            </div>
+            <div style="display:flex;justify-content:space-between"><span>تصغير</span><kbd
+                style="background:var(--bg-hover);padding:2px 8px;border-radius:4px;color:var(--accent)">Ctrl+-</kbd>
+            </div>
+            <div style="display:flex;justify-content:space-between"><span>تطبيق القص</span><kbd
+                style="background:var(--bg-hover);padding:2px 8px;border-radius:4px;color:var(--accent)">Enter</kbd>
+            </div>
+            <div style="display:flex;justify-content:space-between"><span>إلغاء القص</span><kbd
+                style="background:var(--bg-hover);padding:2px 8px;border-radius:4px;color:var(--accent)">Esc</kbd></div>
+          </div>
+        </div>
+      </div>
+
+    </aside>
+
+  </main>
+
+  <!-- Toast Container -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <!-- CV Engine: خوارزميات الرؤية الحاسوبية للقص التلقائي الذكي -->
+  <script src="js/autoCropCV.js"></script>
+  <script src="js/app.js"></script>
+
+  <!-- AI (ONNX Runtime Web) - Online UMD (single-file) -->
+  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.14.0/dist/ort.js"></script>
+
+
+
+
+
+
+
+
+  <script>
+    // Fix canvasContainer display after upload
+    const _origHandle = Upload.handle.bind(Upload);
+    Upload.handle = async function (file) {
+      await _origHandle(file);
+      const cc = document.getElementById('canvasContainer');
+      if (cc) {
+        cc.style.display = 'flex';
+        cc.style.alignItems = 'center';
+        cc.style.justifyContent = 'center';
+        cc.style.width = '100%';
+        cc.style.height = '100%';
+      }
+    };
+  </script>
+
+</body>
+
+</html>
