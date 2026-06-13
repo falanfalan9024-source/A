@@ -1885,7 +1885,7 @@ window.addEventListener('resize', () => {
 const YOLOv8AI = {
   session: null,
   // Keep model local for now; can be replaced with CDN/remote later
-  modelUrl: 'js/models/yolov8n.onnx',
+  modelUrl: 'https://huggingface.co/spaces/hysts/YOLOv8-document-scanner/resolve/main/model.onnx',
 
   inputSize: 640, // adjust if your model expects different size
   inputNames: null,
@@ -1991,7 +1991,7 @@ const YOLOv8AI = {
     const outTensor = Array.isArray(outputs) ? outputs[0] : outputs;
     const tensorByName = outputs && typeof outputs === 'object' && !Array.isArray(outputs) ? outputs : null;
     const t = tensorByName
-      ? (outputs[this.outputNames?.[0]] || outputs[this.outputNames?.[1]] || outputs[this.outputNames?.[0]])
+      ? (outputs[this.outputNames?.[0]] || outputs[this.outputNames?.[1]])
       : outTensor;
 
     if (!t || !t.dims || !t.data) throw new Error('شكل مخرجات YOLO غير مدعوم حالياً');
@@ -2007,14 +2007,12 @@ const YOLOv8AI = {
       return { x: srcX, y: srcY };
     };
 
-    // حالة YOLOv8 بالأبعاد القياسية [1, 84, 8400]
-    if (dims.length === 3 && dims[0] === 1 && dims[2] === 8400) {
-      console.log("[YOLOv8AI] كشف إطار المستمسك الكامل (الأكبر مساحة) بأبعاد [1, 84, 8400]...");
+    // معالجة مخرجات YOLOv8 القياسية [1, 84, 8400]
+    if (dims.length === 3 && dims[2] === 8400) {
       const numBoxes = 8400;
       const numClasses = dims[1] - 4;
       let bestBox = null;
-      let maxArea = 0; // سنعتمد على المساحة لاختيار الإطار الكلي
-      const minScore = 0.25; // حد الثقة المطلوب
+      let maxScore = 0;
 
       for (let i = 0; i < numBoxes; i++) {
         let boxMaxScore = 0;
@@ -2023,29 +2021,23 @@ const YOLOv8AI = {
           if (score > boxMaxScore) boxMaxScore = score;
         }
 
-        if (boxMaxScore >= minScore) {
-          const w = data[2 * numBoxes + i];
-          const h = data[3 * numBoxes + i];
-          const area = w * h; // حساب المساحة في فضاء النموذج (640x640)
-
-          if (area > maxArea) {
-            maxArea = area;
+        if (boxMaxScore >= scoreThreshold) {
+          // اختيار الصندوق ذو الثقة الأعلى (الورقة الأكثر وضوحاً)
+          if (boxMaxScore > maxScore) {
+            maxScore = boxMaxScore;
             const cx = data[0 * numBoxes + i];
             const cy = data[1 * numBoxes + i];
+            const w = data[2 * numBoxes + i];
+            const h = data[3 * numBoxes + i];
 
             const p1 = toOriginal(cx - w / 2, cy - h / 2);
             const p2 = toOriginal(cx + w / 2, cy + h / 2);
 
-            const finalX = Math.max(0, p1.x);
-            const finalY = Math.max(0, p1.y);
-            const finalWidth = Math.min(originalWidth - finalX, p2.x - p1.x);
-            const finalHeight = Math.min(originalHeight - finalY, p2.y - p1.y);
-
             bestBox = {
-              x: Math.round(finalX),
-              y: Math.round(finalY),
-              width: Math.round(finalWidth),
-              height: Math.round(finalHeight),
+              x: Math.max(0, p1.x),
+              y: Math.max(0, p1.y),
+              width: Math.min(originalWidth - Math.max(0, p1.x), p2.x - p1.x),
+              height: Math.min(originalHeight - Math.max(0, p1.y), p2.y - p1.y),
               score: boxMaxScore
             };
           }
@@ -2053,7 +2045,7 @@ const YOLOv8AI = {
       }
 
       if (bestBox) {
-        console.log(`[YOLOv8AI] تم اختيار أكبر إطار مكتشف بمساحة ${Math.round(maxArea)} بنسبة ثقة: ${(bestBox.score * 100).toFixed(1)}%`);
+        console.log(`[YOLOv8AI] تم كشف المستند بنسبة ثقة: ${(bestBox.score * 100).toFixed(1)}%`);
         const corners = [
           { x: bestBox.x, y: bestBox.y },
           { x: bestBox.x + bestBox.width, y: bestBox.y },
@@ -2065,36 +2057,7 @@ const YOLOv8AI = {
       return null;
     }
 
-    // حالات بديلة لدعم موديلات أخرى [1,4,2]
-    if (dims.length === 3 && dims[1] === 4 && dims[2] === 2) {
-      const corners = [];
-      for (let i = 0; i < 4; i++) {
-        corners.push(toOriginal(data[i * 2], data[i * 2 + 1]));
-      }
-      return { corners, score: 1 };
-    }
-
-    // حالة دعم مخرجات الزوايا المسطحة [1, N, 8]
-    if (dims.length === 3 && dims[2] === 8) {
-      const N = dims[1];
-      let best = null;
-      for (let n = 0; n < N; n++) {
-        const base = n * 8;
-        const corners = [
-          toOriginal(data[base + 0], data[base + 1]),
-          toOriginal(data[base + 2], data[base + 3]),
-          toOriginal(data[base + 4], data[base + 5]),
-          toOriginal(data[base + 6], data[base + 7])
-        ];
-        const xs = corners.map(p => p.x);
-        const ys = corners.map(p => p.y);
-        const area = (Math.max(...xs) - Math.min(...xs)) * (Math.max(...ys) - Math.min(...ys));
-        if (!best || area > best.area) best = { corners, area };
-      }
-      if (best) return { corners: best.corners, score: 0.5 };
-    }
-
-    throw new Error('لم أستطع تفسير output tensor لهذا الموديل. dims=' + JSON.stringify(dims));
+    throw new Error('لم أستطع تفسير مخرجات الموديل الحالي. الأبعاد: ' + JSON.stringify(dims));
   },
 
   async runDeepCropUsingYOLO() {
