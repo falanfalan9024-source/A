@@ -2020,7 +2020,6 @@ const YOLOv8AI = {
   // We need correct output tensor interpretation.
   // For now, this function tries common formats:
   postprocessYOLOResults(outputs, letterbox, scoreThreshold = 0.3) {
-  postprocessYOLOResults(outputs, letterbox, scoreThreshold = 0.3) {
     // استخراج مخرجات الموديل (تكون عادةً في Tensor واحد)
     const outName = this.outputNames ? this.outputNames[0] : Object.keys(outputs)[0];
     const t = outputs[outName] || (Array.isArray(outputs) ? outputs[0] : outputs);
