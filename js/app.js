@@ -2131,9 +2131,9 @@ DeepAutoCrop.run = async function () {
         this.lastResult = { corners: yoloRes.corners };
         this.setProgress(80, 'تم الكشف بالذكاء الاصطناعي ✓');
         this.drawCorners(yoloRes.corners);
-        setStatusBadge('تم الكشف — راجع الإطار البنفسجي', 'badge-ready');
-        this.showActionBar();
-        showToast('تم الكشف عبر YOLO. اضغط تطبيق وتصحيح المنظور.', 'success');
+        setStatusBadge('تم الكشف — جارٍ تطبيق القص...', 'badge-processing'); // Update status
+        showToast('تم الكشف عبر YOLO. جارٍ تطبيق القص وتصحيح المنظور تلقائياً.', 'info'); // Inform user
+        await this.apply(); // Immediately apply the crop after successful YOLO detection
         return;
       }
     } catch (e) {
