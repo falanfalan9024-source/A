@@ -2009,11 +2009,12 @@ const YOLOv8AI = {
 
     // حالة YOLOv8 بالأبعاد القياسية [1, 84, 8400]
     if (dims.length === 3 && dims[0] === 1 && dims[2] === 8400) {
-      console.log("[YOLOv8AI] معالجة مخرجات YOLOv8 بالأبعاد [1, 84, 8400]...");
+      console.log("[YOLOv8AI] كشف إطار المستمسك الكامل (الأكبر مساحة) بأبعاد [1, 84, 8400]...");
       const numBoxes = 8400;
       const numClasses = dims[1] - 4;
       let bestBox = null;
-      let maxConfidence = scoreThreshold;
+      let maxArea = 0; // سنعتمد على المساحة لاختيار الإطار الكلي
+      const minScore = 0.25; // حد الثقة المطلوب
 
       for (let i = 0; i < numBoxes; i++) {
         let boxMaxScore = 0;
@@ -2022,33 +2023,37 @@ const YOLOv8AI = {
           if (score > boxMaxScore) boxMaxScore = score;
         }
 
-        if (boxMaxScore > maxConfidence) {
-          maxConfidence = boxMaxScore;
-          const cx = data[0 * numBoxes + i];
-          const cy = data[1 * numBoxes + i];
+        if (boxMaxScore >= minScore) {
           const w = data[2 * numBoxes + i];
           const h = data[3 * numBoxes + i];
+          const area = w * h; // حساب المساحة في فضاء النموذج (640x640)
 
-          const p1 = toOriginal(cx - w / 2, cy - h / 2);
-          const p2 = toOriginal(cx + w / 2, cy + h / 2);
+          if (area > maxArea) {
+            maxArea = area;
+            const cx = data[0 * numBoxes + i];
+            const cy = data[1 * numBoxes + i];
 
-          const finalX = Math.max(0, p1.x);
-          const finalY = Math.max(0, p1.y);
-          const finalWidth = Math.min(originalWidth - finalX, p2.x - p1.x);
-          const finalHeight = Math.min(originalHeight - finalY, p2.y - p1.y);
+            const p1 = toOriginal(cx - w / 2, cy - h / 2);
+            const p2 = toOriginal(cx + w / 2, cy + h / 2);
 
-          bestBox = {
-            x: Math.round(finalX),
-            y: Math.round(finalY),
-            width: Math.round(finalWidth),
-            height: Math.round(finalHeight),
-            score: boxMaxScore
-          };
+            const finalX = Math.max(0, p1.x);
+            const finalY = Math.max(0, p1.y);
+            const finalWidth = Math.min(originalWidth - finalX, p2.x - p1.x);
+            const finalHeight = Math.min(originalHeight - finalY, p2.y - p1.y);
+
+            bestBox = {
+              x: Math.round(finalX),
+              y: Math.round(finalY),
+              width: Math.round(finalWidth),
+              height: Math.round(finalHeight),
+              score: boxMaxScore
+            };
+          }
         }
       }
 
       if (bestBox) {
-        console.log(`[YOLOv8AI] تم العثور على أفضل صندوق لقص الصورة بنسبة ثقة: ${(bestBox.score * 100).toFixed(2)}%`, bestBox);
+        console.log(`[YOLOv8AI] تم اختيار أكبر إطار مكتشف بمساحة ${Math.round(maxArea)} بنسبة ثقة: ${(bestBox.score * 100).toFixed(1)}%`);
         const corners = [
           { x: bestBox.x, y: bestBox.y },
           { x: bestBox.x + bestBox.width, y: bestBox.y },
