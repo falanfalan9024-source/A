@@ -1789,7 +1789,7 @@ const DeepAutoCrop = {
       const cs = this.lastResult.corners;
       if (!cs || cs.length !== 4) throw new Error('زوايا غير صالحة');
       
-      // حساب أبعاد الصندوق المحيط (Bounding Box) كخطة بديلة
+      // حساب أبعاد الصندوق المحيط (Bounding Box) كخطة بديلة (Fallback)
       const xs = cs.map(p => p.x), ys = cs.map(p => p.y);
       const minX = Math.max(0, Math.min(...xs));
       const maxX = Math.min(CM.c.width, Math.max(...xs));
@@ -1817,6 +1817,10 @@ const DeepAutoCrop = {
       if (!success) {
         // خطة بديلة (Fallback): إجراء قص مستطيل عادي بناءً على إحداثيات YOLO المكتشفة
         console.log('[AI Crop] Executing fallback Normal Crop...');
+        
+        // التحقق من أن حجم الصندوق منطقي للقص
+        if (cw < 10 || ch < 10) throw new Error('منطقة الكشف صغيرة جداً للمعالجة');
+        
         AutoCrop.applyCrop({ x: minX, y: minY, w: cw, h: ch });
         methodLabel = 'قص تلقائي (تعديل المستطيل)';
       }
