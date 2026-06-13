@@ -1882,7 +1882,8 @@ window.addEventListener('resize', () => {
 // ============================================================
 // AI (ONNX Runtime Web) - YOLOv8 integration
 // ============================================================
-const modelPath = 'https://huggingface.co/hysts/YOLOv8-document-scanner/resolve/main/model.onnx';
+// تم تغيير الرابط لمستودع موديلات عام (Model Repo) بدلاً من Space لتجنب خطأ 401
+const modelPath = 'https://huggingface.co/nandite/yolov8n-doc-scanner/resolve/main/model.onnx';
 
 const YOLOv8AI = {
   session: null,
@@ -1909,13 +1910,25 @@ const YOLOv8AI = {
     }
 
     try {
-      // إضافة إعدادات CORS وتجاوز الكاش لضمان التحميل من الرابط الجديد
-      this.session = await window.ort.InferenceSession.create(this.modelUrl, {
+      showLoading('تحميل موديل الذكاء الاصطناعي (أول مرة فقط)...');
+      
+      // التحميل اليدوي لتجاوز مشاكل حماية روابط CDN
+      const response = await fetch(this.modelUrl);
+      if (!response.ok) throw new Error(`فشل الوصول للموديل: ${response.status}`);
+      
+      const modelBuffer = await response.arrayBuffer();
+      
+      // إنشاء الجلسة باستخدام البافر بدلاً من الرابط المباشر
+      this.session = await window.ort.InferenceSession.create(new Uint8Array(modelBuffer), {
         executionProviders: ['wasm'],
       });
+
+      hideLoading();
+      console.log('[YOLOv8AI] تم تحميل الموديل بنجاح ✓');
     } catch (e) {
+      hideLoading();
       console.error('[YOLOv8AI] Model load error:', e);
-      showToast('فشل تحميل موديل الذكاء الاصطناعي من الرابط الخارجي. تأكد من اتصال الإنترنت.', 'error');
+      showToast('فشل تحميل موديل AI. تأكد من اتصال الإنترنت وجرّب تحديث الصفحة (Ctrl+F5).', 'error');
       throw e;
     }
 
