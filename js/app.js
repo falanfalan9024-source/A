@@ -1962,7 +1962,7 @@ const YOLOv8AI = {
   // 1) corners directly: [1,4,2]
   // 2) boxes + 4 corners flattened: [1,N,8]
   // 3) corners heatmap/keypoints: not supported without your exact output format
-  postprocessYOLOResults(outputs, letterbox, scoreThreshold = 0.25) {
+  postprocessYOLOResults(outputs, letterbox, scoreThreshold = 0.3) {
     // Normalize output tensor
     const outTensor = Array.isArray(outputs) ? outputs[0] : outputs;
     const tensorByName = outputs && typeof outputs === 'object' && !Array.isArray(outputs) ? outputs : null;
@@ -2041,57 +2041,69 @@ const YOLOv8AI = {
     // where 84 = 4(box) + 1(obj/conf) + 80(classes)
     // and data layout is [1, ch, n] => data[c*n + i]
     if (dims.length === 3 && dims[0] === 1) {
-      const ch = dims[1];
-      const n = dims[2];
+        console.log("[YOLOv8AI] بدء تفكيك الـ Tensor بأبعاد [1, 84, 8400]...");
 
-      if (n > 0 && data.length === 1 * ch * n) {
-        const get = (c, i) => data[c * n + i];
+        const numBoxes = dims[2];  // 8400
+        const numClasses = dims[1] - 4; // 80 (في حال كان الـ Tensor يحتوي على 84 صفاً)
+        
+        let bestBox = null;
+        let maxConfidence = scoreThreshold;
 
-        // Expected YOLO format
-        const hasClasses = ch > 5;
-        const nc = hasClasses ? (ch - 5) : 0; // for ch=84 => nc=79? (actually 80)
+        for (let i = 0; i < numBoxes; i++) {
+            let boxMaxScore = 0;
+            let classId = -1;
 
-        // If dims are exactly [1,84,8400], then nc should be 80.
-        // But some exports might set ch=81/85 depending on how they were exported.
-        // We'll still handle generically.
-
-        let best = null;
-        for (let i = 0; i < n; i++) {
-          const cx = get(0, i);
-          const cy = get(1, i);
-          const bw = get(2, i);
-          const bh = get(3, i);
-
-          const obj = get(4, i);
-
-          // Find best class score among nc classes
-          let bestClassScore = 0;
-          if (hasClasses) {
-            for (let k = 0; k < nc; k++) {
-              const clsVal = get(5 + k, i);
-              // Use sigmoid to convert logits/probs to [0..1]
-              const clsProb = 1 / (1 + Math.exp(-clsVal));
-              if (clsProb > bestClassScore) bestClassScore = clsProb;
+            for (let c = 0; c < numClasses; c++) {
+                // الوصول إلى قيم الفئات بعد الصفوف الـ 4 الأولى للإحداثيات
+                const score = data[(4 + c) * numBoxes + i];
+                if (score > boxMaxScore) {
+                    boxMaxScore = score;
+                    classId = c;
+                }
             }
-          }
 
-          const score = obj * (hasClasses ? bestClassScore : 1);
-          if (score < scoreThreshold) continue;
+            if (boxMaxScore > maxConfidence) {
+                maxConfidence = boxMaxScore;
 
-          const corners = boxToCorners(cx, cy, bw, bh);
-          const xs = corners.map(p => p.x);
-          const ys = corners.map(p => p.y);
+                const cx = data[0 * numBoxes + i];
+                const cy = data[1 * numBoxes + i];
+                const w  = data[2 * numBoxes + i];
+                const h  = data[3 * numBoxes + i];
 
-          const area = (Math.max(...xs) - Math.min(...xs)) * (Math.max(...ys) - Math.min(...ys));
-          const finalScore = area * score;
+                // تحويل الإحداثيات واستخدام helper لضمان دقة الـ Letterbox
+                const p1 = toOriginal(cx - w / 2, cy - h / 2);
+                const p2 = toOriginal(cx + w / 2, cy + h / 2);
 
-          if (!best || finalScore > best.finalScore) {
-            best = { corners, finalScore, score };
-          }
+                const finalX = Math.max(0, p1.x);
+                const finalY = Math.max(0, p1.y);
+                const finalWidth = Math.min(originalWidth - finalX, p2.x - p1.x);
+                const finalHeight = Math.min(originalHeight - finalY, p2.y - p1.y);
+
+                bestBox = {
+                    x: Math.round(finalX),
+                    y: Math.round(finalY),
+                    width: Math.round(finalWidth),
+                    height: Math.round(finalHeight),
+                    score: boxMaxScore,
+                    classId: classId
+                };
+            }
         }
 
-        if (best && best.corners && best.corners.length === 4) {
-          return { corners: best.corners, score: best.score };
+        if (bestBox) {
+            console.log(`[YOLOv8AI] تم العثور على أفضل صندوق لقص الصورة بنجاح بنسبة ثقة: ${(bestBox.score * 100).toFixed(2)}%`, bestBox);
+            
+            // تحويل الصندوق إلى 4 زوايا كما يتوقع المشروع
+            const corners = [
+                { x: bestBox.x, y: bestBox.y },
+                { x: bestBox.x + bestBox.width, y: bestBox.y },
+                { x: bestBox.x + bestBox.width, y: bestBox.y + bestBox.height },
+                { x: bestBox.x, y: bestBox.y + bestBox.height }
+            ];
+            return { corners, score: bestBox.score };
+        } else {
+            console.warn(`[YOLOv8AI] لم يتم العثور على أي عنصر يتجاوز نسبة الثقة المحددة (${scoreThreshold}).`);
+            return null;
         }
       }
     }
@@ -2188,4 +2200,3 @@ DeepAutoCrop.run = async function () {
 };
 
 document.addEventListener('DOMContentLoaded', () => App.init());
-
