@@ -1176,6 +1176,7 @@ const App = {
     this.initSliders();
     this.initPanels();
     this.initTabNav();
+    this.initUploadButton(); // New function call
     this.initKeyboard();
     this.initZoom();
     this.disableTools();
@@ -1183,6 +1184,17 @@ const App = {
 
     // Set initial tab
     this.switchTab('crop');
+  },
+
+  initUploadButton() {
+    // Attach event listener for the file input button
+    const selectButton = $('selectFileInputButton');
+    if (selectButton) {
+      selectButton.addEventListener('click', (event) => {
+        $('fileInput').click();
+        event.stopPropagation();
+      });
+    }
   },
 
   initSliders() {
@@ -1266,6 +1278,21 @@ const App = {
 
   disableTools() {
     $$('[data-requires-image]').forEach(el => el.disabled = true);
+  }
+};
+
+// Fix canvasContainer display after upload
+// This was previously in an inline script in index.html, moved here
+const _origUploadHandle = Upload.handle.bind(Upload);
+Upload.handle = async function (file) {
+  await _origUploadHandle(file);
+  const cc = document.getElementById('canvasContainer');
+  if (cc) {
+    cc.style.display = 'flex';
+    cc.style.alignItems = 'center';
+    cc.style.justifyContent = 'center';
+    cc.style.width = '100%';
+    cc.style.height = '100%';
   }
 };
 

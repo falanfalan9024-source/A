@@ -481,7 +481,7 @@
             <span class="format-tag">BMP</span>
             <span class="format-tag">GIF</span>
           </div>
-          <button class="btn btn-primary btn-lg" onclick="$('fileInput').click();event.stopPropagation()" title="اختيار صورة" aria-label="اختيار صورة">
+          <button class="btn btn-primary btn-lg" id="selectFileInputButton" title="اختيار صورة" aria-label="اختيار صورة">
             <i class="fas fa-folder-open"></i> اختر صورة
           </button>
           <input type="file" id="fileInput" accept="image/*" style="display:none" aria-label="ملف الصورة" />
@@ -717,30 +717,6 @@
 
   <!-- AI (ONNX Runtime Web) - Online UMD (single-file) -->
   <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.0/dist/ort.min.js"></script>
-
-
-
-
-
-
-
-
-  <script>
-    // Fix canvasContainer display after upload
-    const _origHandle = Upload.handle.bind(Upload);
-    Upload.handle = async function (file) {
-      await _origHandle(file);
-      const cc = document.getElementById('canvasContainer');
-      if (cc) {
-        cc.style.display = 'flex';
-        cc.style.alignItems = 'center';
-        cc.style.justifyContent = 'center';
-        cc.style.width = '100%';
-        cc.style.height = '100%';
-      }
-    };
-  </script>
-
 </body>
 
 </html>
