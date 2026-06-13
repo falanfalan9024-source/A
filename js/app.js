@@ -1882,12 +1882,13 @@ window.addEventListener('resize', () => {
 // ============================================================
 // AI (ONNX Runtime Web) - YOLOv8 integration
 // ============================================================
+const modelPath = 'https://huggingface.co/spaces/hysts/YOLOv8-document-scanner/resolve/main/model.onnx';
+
 const YOLOv8AI = {
   session: null,
-  // Keep model local for now; can be replaced with CDN/remote later
-  modelUrl: 'https://huggingface.co/spaces/hysts/YOLOv8-document-scanner/resolve/main/model.onnx',
+  modelUrl: modelPath,
 
-  inputSize: 640, // adjust if your model expects different size
+  inputSize: 640,
   inputNames: null,
   outputNames: null,
   ready: false,
@@ -1896,14 +1897,9 @@ const YOLOv8AI = {
     if (this.ready) return;
     if (!window.ort) throw new Error('ORT لم يتم تحميله');
 
-    // Force WASM backend + load wasm binaries from ORT CDN.
-    // This avoids local wasm module loading problems and helps with newer opsets.
     try {
       const wasmBaseUrl = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.0/dist/';
-      if (window.ort?.env?.wasm) {
-        window.ort.env.wasm.wasmPaths = wasmBaseUrl;
-        window.ort.env.wasm.numThreads = 1;
-      } else if (window.ort?.env) {
+      if (window.ort?.env) {
         window.ort.env.wasm = window.ort.env.wasm || {};
         window.ort.env.wasm.wasmPaths = wasmBaseUrl;
         window.ort.env.wasm.numThreads = 1;
@@ -1912,24 +1908,13 @@ const YOLOv8AI = {
       console.warn('Failed to configure ort.env.wasm:', e);
     }
 
-    // Important: use the global ort reference to ensure consistent env config
     this.session = await window.ort.InferenceSession.create(this.modelUrl, {
       executionProviders: ['wasm'],
     });
 
-
-
-
     this.inputNames = this.session.inputNames;
     this.outputNames = this.session.outputNames;
     this.ready = true;
-
-    console.log('[YOLOv8AI] inputNames:', this.inputNames);
-    console.log('[YOLOv8AI] outputNames:', this.outputNames);
-    for (const name of this.outputNames) {
-      const meta = this.session.outputMetadata?.[name];
-      console.log('[YOLOv8AI] outputMetadata:', name, meta);
-    }
   },
 
   // Preprocess: canvas -> float32 tensor [1,3,H,W] normalized to [0,1]
@@ -1988,18 +1973,12 @@ const YOLOv8AI = {
   // We need correct output tensor interpretation.
   // For now, this function tries common formats:
   postprocessYOLOResults(outputs, letterbox, scoreThreshold = 0.3) {
-    const outTensor = Array.isArray(outputs) ? outputs[0] : outputs;
-    const tensorByName = outputs && typeof outputs === 'object' && !Array.isArray(outputs) ? outputs : null;
-    const t = tensorByName
-      ? (outputs[this.outputNames?.[0]] || outputs[this.outputNames?.[1]])
-      : outTensor;
+    const t = Array.isArray(outputs) ? outputs[0] : (outputs[this.outputNames[0]] || outputs[Object.keys(outputs)[0]]);
 
-    if (!t || !t.dims || !t.data) throw new Error('شكل مخرجات YOLO غير مدعوم حالياً');
+    if (!t || !t.dims || !t.data) throw new Error('مخرجات النموذج غير صالحة');
 
     const dims = Array.from(t.dims);
     const data = t.data;
-    const originalWidth = letterbox.srcW;
-    const originalHeight = letterbox.srcH;
 
     const toOriginal = (x, y) => {
       const srcX = (x - letterbox.padX) / letterbox.scale;
@@ -2022,7 +2001,6 @@ const YOLOv8AI = {
         }
 
         if (boxMaxScore >= scoreThreshold) {
-          // اختيار الصندوق ذو الثقة الأعلى (الورقة الأكثر وضوحاً)
           if (boxMaxScore > maxScore) {
             maxScore = boxMaxScore;
             const cx = data[0 * numBoxes + i];
@@ -2034,10 +2012,10 @@ const YOLOv8AI = {
             const p2 = toOriginal(cx + w / 2, cy + h / 2);
 
             bestBox = {
-              x: Math.max(0, p1.x),
-              y: Math.max(0, p1.y),
-              width: Math.min(originalWidth - Math.max(0, p1.x), p2.x - p1.x),
-              height: Math.min(originalHeight - Math.max(0, p1.y), p2.y - p1.y),
+              x: Math.round(Math.max(0, p1.x)),
+              y: Math.round(Math.max(0, p1.y)),
+              width: Math.round(Math.min(letterbox.srcW - p1.x, p2.x - p1.x)),
+              height: Math.round(Math.min(letterbox.srcH - p1.y, p2.y - p1.y)),
               score: boxMaxScore
             };
           }
