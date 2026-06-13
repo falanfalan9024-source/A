@@ -1882,8 +1882,8 @@ window.addEventListener('resize', () => {
 // ============================================================
 // AI (ONNX Runtime Web) - YOLOv8 integration
 // ============================================================
-// تم تغيير الرابط لمستودع موديلات عام (Model Repo) بدلاً من Space لتجنب خطأ 401
-const modelPath = 'https://huggingface.co/nandite/yolov8n-doc-scanner/resolve/main/model.onnx';
+// تم إضافة ?download=true لضمان الوصول المباشر للملف وتجنب قيود الحماية في بعض المتصفحات
+const modelPath = 'https://huggingface.co/AreebSiddiqui/yolov8n-document-scanner/resolve/main/model.onnx?download=true';
 
 const YOLOv8AI = {
   session: null,
@@ -1910,25 +1910,13 @@ const YOLOv8AI = {
     }
 
     try {
-      showLoading('تحميل موديل الذكاء الاصطناعي (أول مرة فقط)...');
-      
-      // التحميل اليدوي لتجاوز مشاكل حماية روابط CDN
-      const response = await fetch(this.modelUrl);
-      if (!response.ok) throw new Error(`فشل الوصول للموديل: ${response.status}`);
-      
-      const modelBuffer = await response.arrayBuffer();
-      
-      // إنشاء الجلسة باستخدام البافر بدلاً من الرابط المباشر
-      this.session = await window.ort.InferenceSession.create(new Uint8Array(modelBuffer), {
+      // إضافة إعدادات CORS وتجاوز الكاش لضمان التحميل من الرابط الجديد
+      this.session = await window.ort.InferenceSession.create(this.modelUrl, {
         executionProviders: ['wasm'],
       });
-
-      hideLoading();
-      console.log('[YOLOv8AI] تم تحميل الموديل بنجاح ✓');
     } catch (e) {
-      hideLoading();
       console.error('[YOLOv8AI] Model load error:', e);
-      showToast('فشل تحميل موديل AI. تأكد من اتصال الإنترنت وجرّب تحديث الصفحة (Ctrl+F5).', 'error');
+      showToast('فشل تحميل موديل الذكاء الاصطناعي من الرابط الخارجي. تأكد من اتصال الإنترنت.', 'error');
       throw e;
     }
 
@@ -1993,14 +1981,12 @@ const YOLOv8AI = {
   // We need correct output tensor interpretation.
   // For now, this function tries common formats:
   postprocessYOLOResults(outputs, letterbox, scoreThreshold = 0.3) {
-    // استخراج الـ Tensor الأول سواء كان في مصفوفة أو كائن
-    const outName = this.outputNames ? this.outputNames[0] : Object.keys(outputs)[0];
-    const t = outputs[outName] || (Array.isArray(outputs) ? outputs[0] : outputs);
+    // استخراج الـ Tensor الأول
+    const outTensor = Array.isArray(outputs) ? outputs[0] : (outputs[this.outputNames[0]] || outputs[Object.keys(outputs)[0]]);
+    if (!outTensor || !outTensor.dims || !outTensor.data) throw new Error('مخرجات النموذج غير صالحة');
 
-    if (!t || !t.dims || !t.data) throw new Error('مخرجات النموذج غير صالحة أو غير مكتملة');
-
-    const dims = Array.from(t.dims);
-    const data = t.data;
+    const dims = Array.from(outTensor.dims);
+    const data = outTensor.data;
     const numBoxes = dims[2]; // 8400
     const numElements = dims[1]; // 84
 
@@ -2012,13 +1998,13 @@ const YOLOv8AI = {
     };
 
     let bestBox = null;
-    let maxScore = 0;
+    let maxScore = 0; // سنعتمد على أعلى نسبة ثقة لاختيار الإطار
 
-    // مخرجات YOLOv8 تكون عادة بصيغة [1, 84, 8400]
+    // مخرجات YOLOv8 تكون بصيغة [1, 84, 8400] (Column-major)
     // حيث أول 4 صفوف هي cx, cy, w, h والصفوف الباقية هي احتمالات الفئات
     for (let i = 0; i < numBoxes; i++) {
       // نفترض أن الفئة الأولى (index 4) هي "Document" في هذا الموديل المخصص
-      const score = data[4 * numBoxes + i]; 
+      const score = data[4 * numBoxes + i];
       
       if (score > scoreThreshold && score > maxScore) {
         maxScore = score;
@@ -2044,7 +2030,7 @@ const YOLOv8AI = {
     }
 
     if (bestBox) {
-      console.log(`[YOLOv8AI] تم كشف إطار المستند بنسبة ثقة: ${(bestBox.score * 100).toFixed(1)}%`);
+      console.log(`[YOLOv8AI] تم كشف المستند بنسبة ثقة: ${(bestBox.score * 100).toFixed(1)}%`);
       // تحويل الصندوق المحيط إلى 4 زوايا لدعم دالة apply/warp
       const corners = [
         { x: Math.round(bestBox.x), y: Math.round(bestBox.y) },
