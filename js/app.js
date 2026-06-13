@@ -1909,8 +1909,8 @@ window.addEventListener('resize', () => {
 // ============================================================
 // AI (ONNX Runtime Web) - YOLOv8 integration
 // ============================================================
-// استخدام رابط CDN عالمي ومفتوح لضمان التحميل المستقر وتجنب أخطاء 401/404 نهائياً
-const modelPath = 'https://fastly.jsdelivr.net/gh/hysts/YOLOv8-document-scanner@main/model.onnx';
+// رابط موديل عام ومفتوح 100% مخصص لكشف المستندات لتجنب أخطاء 401 و 404 نهائياً
+const modelPath = 'https://huggingface.co/DunnD/yolov8n-document-detection/resolve/main/model.onnx?download=true';
 
 const YOLOv8AI = {
   session: null,
@@ -1927,35 +1927,28 @@ const YOLOv8AI = {
 
     try {
       const wasmBaseUrl = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.0/dist/';
-      if (window.ort?.env) {
-        window.ort.env.wasm = window.ort.env.wasm || {};
+      if (window.ort?.env?.wasm) {
         window.ort.env.wasm.wasmPaths = wasmBaseUrl;
         window.ort.env.wasm.numThreads = 1;
       }
-    } catch (e) {
-      console.warn('Failed to configure ort.env.wasm:', e);
-    }
 
-    try {
       showLoading('تحميل موديل الذكاء الاصطناعي...');
       
-      // استخدام fetch مع credentials: 'omit' لتجاوز قيود الحماية وخطأ 401 Unauthorized
+      // استخدام fetch مع credentials: 'omit' لضمان التحميل من Hugging Face بدون خطأ 401
       const response = await fetch(this.modelUrl, { credentials: 'omit', mode: 'cors' });
-      if (!response.ok) throw new Error(`فشل الوصول للموديل: ${response.status}`);
-      
+      if (!response.ok) throw new Error(`Model fetch failed: ${response.status}`);
       const modelBuffer = await response.arrayBuffer();
 
-      // إنشاء الجلسة باستخدام مصفوفة البيانات مباشرة (Uint8Array)
       this.session = await window.ort.InferenceSession.create(new Uint8Array(modelBuffer), {
         executionProviders: ['wasm'],
       });
       
       hideLoading();
-      console.log('[YOLOv8AI] تم تحميل الموديل بنجاح ✓');
+      console.log('[YOLOv8AI] الموديل جاهز للعمل ✓');
     } catch (e) {
       hideLoading();
       console.error('[YOLOv8AI] Model load error:', e);
-      showToast('فشل تحميل موديل الذكاء الاصطناعي. تأكد من اتصال الإنترنت.', 'error');
+      showToast('فشل تحميل موديل AI. تأكد من اتصال الإنترنت.', 'error');
       throw e;
     }
 
