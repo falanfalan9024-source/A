@@ -1788,14 +1788,38 @@ const DeepAutoCrop = {
       // التحقق من الزوايا قبل الإرسال
       const cs = this.lastResult.corners;
       if (!cs || cs.length !== 4) throw new Error('زوايا غير صالحة');
+      
+      // حساب أبعاد الصندوق المحيط (Bounding Box) كخطة بديلة
       const xs = cs.map(p => p.x), ys = cs.map(p => p.y);
-      const minX = Math.min(...xs), maxX = Math.max(...xs);
-      const minY = Math.min(...ys), maxY = Math.max(...ys);
+      const minX = Math.max(0, Math.min(...xs));
+      const maxX = Math.min(CM.c.width, Math.max(...xs));
+      const minY = Math.max(0, Math.min(...ys));
+      const maxY = Math.min(CM.c.height, Math.max(...ys));
+      const cw = maxX - minX;
+      const ch = maxY - minY;
+
       console.log('[AI Crop] corners =', cs, 'bbox =', { minX, minY, maxX, maxY });
 
-      const ok = await AutoCropCV.applyWarp(CM.c, this.lastResult.corners);
-      if (!ok) throw new Error('فشل تصحيح المنظور');
-      console.log('[AI Crop] result size =', ok);
+      let success = false;
+      let methodLabel = 'قص ذكي AI + تصحيح منظور';
+
+      try {
+        // المحاولة الأساسية: تصحيح المنظور (Warp Perspective)
+        const ok = await AutoCropCV.applyWarp(CM.c, cs);
+        if (ok) {
+          success = true;
+          console.log('[AI Crop] Perspective warp success:', ok);
+        }
+      } catch (warpErr) {
+        console.warn('[AI Crop] Perspective warp failed, switching to Normal Crop fallback:', warpErr);
+      }
+
+      if (!success) {
+        // خطة بديلة (Fallback): إجراء قص مستطيل عادي بناءً على إحداثيات YOLO المكتشفة
+        console.log('[AI Crop] Executing fallback Normal Crop...');
+        AutoCrop.applyCrop({ x: minX, y: minY, w: cw, h: ch });
+        methodLabel = 'قص تلقائي (تعديل المستطيل)';
+      }
 
       // تحديث الحالة والقيم المرتبطة
       State.imageWidth = CM.c.width;
@@ -1804,7 +1828,7 @@ const DeepAutoCrop = {
       $('infoHeight').textContent = CM.c.height + ' px';
       State.currentDataURL = CM.snapshot();
       ColorTools.baseSnap = CM.snapshot();
-      History.push('قص ذكي AI + تصحيح منظور', CM.snapshot());
+      History.push(methodLabel, CM.snapshot());
 
       // تنظيف الواجهة
       this.clearOverlay();
@@ -1820,8 +1844,8 @@ const DeepAutoCrop = {
         CropTool.activate();
       }
 
-      setStatusBadge('تم القص بالذكاء الاصطناعي ✓', 'badge-ready');
-      showToast(`تم تصحيح المنظور والقص: ${CM.c.width}×${CM.c.height} px`, 'success');
+      setStatusBadge('تم القص بنجاح ✓', 'badge-ready');
+      showToast(`تم القص بنجاح: ${CM.c.width}×${CM.c.height} px`, 'success');
     } catch (err) {
       console.error(err);
       showToast('فشل تطبيق القص: ' + (err.message || err), 'error');
