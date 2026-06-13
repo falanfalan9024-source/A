@@ -1882,8 +1882,8 @@ window.addEventListener('resize', () => {
 // ============================================================
 // AI (ONNX Runtime Web) - YOLOv8 integration
 // ============================================================
-// استخدام رابط الموديل العام الجديد لإنهاء خطأ 401 Unauthorized وضمان الوصول المباشر
-const modelPath = 'https://huggingface.co/currency-recog/yolov8n_document_v2/resolve/main/weights/best.onnx?download=true';
+// استخدام رابط CDN عالمي ومفتوح لضمان التحميل المستقر وتجنب أخطاء 401/404 نهائياً
+const modelPath = 'https://fastly.jsdelivr.net/gh/hysts/YOLOv8-document-scanner@main/model.onnx';
 
 const YOLOv8AI = {
   session: null,
@@ -1993,18 +1993,21 @@ const YOLOv8AI = {
   // We need correct output tensor interpretation.
   // For now, this function tries common formats:
   postprocessYOLOResults(outputs, letterbox, scoreThreshold = 0.3) {
-    // 1. استخراج الـ Tensor الأول من مخرجات الموديل
+  postprocessYOLOResults(outputs, letterbox, scoreThreshold = 0.3) {
+    // استخراج مخرجات الموديل (تكون عادةً في Tensor واحد)
     const outName = this.outputNames ? this.outputNames[0] : Object.keys(outputs)[0];
     const t = outputs[outName] || (Array.isArray(outputs) ? outputs[0] : outputs);
 
-    if (!t || !t.dims || !t.data) throw new Error('مخرجات النموذج غير صالحة أو غير مكتملة');
+    if (!t || !t.dims || !t.data) {
+      throw new Error('مخرجات النموذج غير صالحة أو غير مكتملة');
+    }
 
     const dims = Array.from(t.dims);
     const data = t.data;
-    const numBoxes = dims[2];    // 8400 للصورة 640x640
-    const numElements = dims[1]; // 84 (4 إحداثيات + احتمالات الفئات)
+    const numElements = dims[1]; // 84
+    const numBoxes = dims[2];    // 8400
 
-    // دالة تحويل الإحداثيات من فضاء الموديل (640x640 مع الحواشي) إلى أبعاد الصورة الأصلية
+    // دالة تحويل الإحداثيات من فضاء الموديل المربّع (640x640) إلى أبعاد الصورة الأصلية
     const toOriginal = (x, y) => {
       return {
         x: (x - letterbox.padX) / letterbox.scale,
@@ -2013,45 +2016,46 @@ const YOLOv8AI = {
     };
 
     let bestBox = null;
-    let maxScore = 0;
+    let globalMaxScore = 0;
 
     // مخرجات YOLOv8 تكون بصيغة [1, 84, 8400] (Column-major)
-    // الصفوف 0، 1، 2، 3 هي: cx, cy, w, h
-    // الصفوف من 4 فصاعداً هي احتمالات الفئات
+    // أول 4 قيم لكل صندوق هي (cx, cy, w, h) وبقية الـ 80 قيمة هي احتمالات الفئات
     for (let i = 0; i < numBoxes; i++) {
-      // إيجاد أعلى ثقة (Max Score) بين كافة الفئات لهذا الصندوق
-      let boxMaxScore = 0;
+      // البحث عن أعلى نسبة ثقة (Max Class Score) لهذا الصندوق المحدد
+      let currentBoxMaxScore = 0;
       for (let c = 4; c < numElements; c++) {
-        const s = data[c * numBoxes + i];
-        if (s > boxMaxScore) boxMaxScore = s;
+        const score = data[c * numBoxes + i];
+        if (score > currentBoxMaxScore) {
+          currentBoxMaxScore = score;
+        }
       }
-      
-      // اختيار الصندوق الذي يحمل أعلى نسبة ثقة لتحديد إطار الورقة بالكامل
-      if (boxMaxScore > scoreThreshold && boxMaxScore > maxScore) {
-        maxScore = boxMaxScore;
-        
+
+      // اختيار الصندوق الذي يحقق أعلى ثقة إجمالية ويتجاوز حد 0.3
+      if (currentBoxMaxScore > scoreThreshold && currentBoxMaxScore > globalMaxScore) {
+        globalMaxScore = currentBoxMaxScore;
+
         const cx = data[0 * numBoxes + i];
         const cy = data[1 * numBoxes + i];
         const w = data[2 * numBoxes + i];
         const h = data[3 * numBoxes + i];
 
-        // تحويل من (مركز، عرض، طول) إلى نقاط (أعلى-يسار، أسفل-يمين) في فضاء الصورة الأصلية
-        const p1 = toOriginal(cx - w / 2, cy - h / 2);
-        const p2 = toOriginal(cx + w / 2, cy + h / 2);
+        // تحويل مركز الصندوق وأبعاده إلى نقاط (أعلى-يسار) و (أسفل-يمين) في فضاء الصورة الأصلية
+        const topLeft = toOriginal(cx - w / 2, cy - h / 2);
+        const bottomRight = toOriginal(cx + w / 2, cy + h / 2);
 
-        // تقييد الصندوق ضمن حدود الصورة الأصلية وحساب الأبعاد النهائية
-        const x = Math.max(0, p1.x);
-        const y = Math.max(0, p1.y);
-        const width = Math.min(letterbox.srcW - x, p2.x - p1.x);
-        const height = Math.min(letterbox.srcH - y, p2.y - p1.y);
+        // ضمان بقاء الصندوق ضمن حدود الصورة الأصلية وحساب الطول والعرض النهائي
+        const x = Math.max(0, topLeft.x);
+        const y = Math.max(0, topLeft.y);
+        const width = Math.min(letterbox.srcW - x, bottomRight.x - topLeft.x);
+        const height = Math.min(letterbox.srcH - y, bottomRight.y - topLeft.y);
 
-        bestBox = { x, y, width, height, score: boxMaxScore };
+        bestBox = { x, y, width, height, score: currentBoxMaxScore };
       }
     }
 
     if (bestBox) {
-      console.log(`[YOLOv8AI] تم كشف المستند بنسبة ثقة: ${(bestBox.score * 100).toFixed(1)}%`);
-      // إرجاع الزوايا الأربع بالترتيب المطلوب لدالة القص وتصحيح المنظور
+      console.log(`[YOLOv8AI] تم كشف المستند بنجاح. نسبة الثقة: ${(bestBox.score * 100).toFixed(1)}%`);
+      // إرجاع الزوايا الأربع بالترتيب الصحيح لعملية القص
       const corners = [
         { x: Math.round(bestBox.x), y: Math.round(bestBox.y) },
         { x: Math.round(bestBox.x + bestBox.width), y: Math.round(bestBox.y) },
@@ -2061,7 +2065,7 @@ const YOLOv8AI = {
       return { corners, score: bestBox.score };
     }
 
-    console.warn('[YOLOv8AI] لم يتم العثور على مستند بحد ثقة أعلى من:', scoreThreshold);
+    console.warn('[YOLOv8AI] لم يتم العثور على وثيقة واضحة بحد ثقة أعلى من:', scoreThreshold);
     return null;
   },
 
