@@ -1882,7 +1882,7 @@ window.addEventListener('resize', () => {
 // ============================================================
 // AI (ONNX Runtime Web) - YOLOv8 integration
 // ============================================================
-const modelPath = 'https://huggingface.co/spaces/hysts/YOLOv8-document-scanner/resolve/main/model.onnx';
+const modelPath = 'https://huggingface.co/hysts/YOLOv8-document-scanner/resolve/main/model.onnx';
 
 const YOLOv8AI = {
   session: null,
@@ -1908,9 +1908,16 @@ const YOLOv8AI = {
       console.warn('Failed to configure ort.env.wasm:', e);
     }
 
-    this.session = await window.ort.InferenceSession.create(this.modelUrl, {
-      executionProviders: ['wasm'],
-    });
+    try {
+      // إضافة إعدادات CORS وتجاوز الكاش لضمان التحميل من الرابط الجديد
+      this.session = await window.ort.InferenceSession.create(this.modelUrl, {
+        executionProviders: ['wasm'],
+      });
+    } catch (e) {
+      console.error('[YOLOv8AI] Model load error:', e);
+      showToast('فشل تحميل موديل الذكاء الاصطناعي من الرابط الخارجي. تأكد من اتصال الإنترنت.', 'error');
+      throw e;
+    }
 
     this.inputNames = this.session.inputNames;
     this.outputNames = this.session.outputNames;
@@ -1973,69 +1980,70 @@ const YOLOv8AI = {
   // We need correct output tensor interpretation.
   // For now, this function tries common formats:
   postprocessYOLOResults(outputs, letterbox, scoreThreshold = 0.3) {
-    const t = Array.isArray(outputs) ? outputs[0] : (outputs[this.outputNames[0]] || outputs[Object.keys(outputs)[0]]);
+    // استخراج الـ Tensor الأول سواء كان في مصفوفة أو كائن
+    const outName = this.outputNames ? this.outputNames[0] : Object.keys(outputs)[0];
+    const t = outputs[outName] || (Array.isArray(outputs) ? outputs[0] : outputs);
 
-    if (!t || !t.dims || !t.data) throw new Error('مخرجات النموذج غير صالحة');
+    if (!t || !t.dims || !t.data) throw new Error('مخرجات النموذج غير صالحة أو غير مكتملة');
 
     const dims = Array.from(t.dims);
     const data = t.data;
+    const numBoxes = dims[2]; // 8400
+    const numElements = dims[1]; // 84
 
     const toOriginal = (x, y) => {
-      const srcX = (x - letterbox.padX) / letterbox.scale;
-      const srcY = (y - letterbox.padY) / letterbox.scale;
-      return { x: srcX, y: srcY };
+      return {
+        x: (x - letterbox.padX) / letterbox.scale,
+        y: (y - letterbox.padY) / letterbox.scale
+      };
     };
 
-    // معالجة مخرجات YOLOv8 القياسية [1, 84, 8400]
-    if (dims.length === 3 && dims[2] === 8400) {
-      const numBoxes = 8400;
-      const numClasses = dims[1] - 4;
-      let bestBox = null;
-      let maxScore = 0;
+    let bestBox = null;
+    let maxScore = 0;
 
-      for (let i = 0; i < numBoxes; i++) {
-        let boxMaxScore = 0;
-        for (let c = 0; c < numClasses; c++) {
-          const score = data[(4 + c) * numBoxes + i];
-          if (score > boxMaxScore) boxMaxScore = score;
-        }
+    // مخرجات YOLOv8 تكون عادة بصيغة [1, 84, 8400]
+    // حيث أول 4 صفوف هي cx, cy, w, h والصفوف الباقية هي احتمالات الفئات
+    for (let i = 0; i < numBoxes; i++) {
+      // نفترض أن الفئة الأولى (index 4) هي "Document" في هذا الموديل المخصص
+      const score = data[4 * numBoxes + i]; 
+      
+      if (score > scoreThreshold && score > maxScore) {
+        maxScore = score;
+        
+        // استخراج الإحداثيات من الـ Column-major format
+        const cx = data[0 * numBoxes + i];
+        const cy = data[1 * numBoxes + i];
+        const w = data[2 * numBoxes + i];
+        const h = data[3 * numBoxes + i];
 
-        if (boxMaxScore >= scoreThreshold) {
-          if (boxMaxScore > maxScore) {
-            maxScore = boxMaxScore;
-            const cx = data[0 * numBoxes + i];
-            const cy = data[1 * numBoxes + i];
-            const w = data[2 * numBoxes + i];
-            const h = data[3 * numBoxes + i];
+        // تحويل من (مركز، عرض، طول) إلى (أعلى-يسار، أسفل-يمين)
+        const p1 = toOriginal(cx - w / 2, cy - h / 2);
+        const p2 = toOriginal(cx + w / 2, cy + h / 2);
 
-            const p1 = toOriginal(cx - w / 2, cy - h / 2);
-            const p2 = toOriginal(cx + w / 2, cy + h / 2);
+        // حساب الأبعاد النهائية مع المطابقة لأبعاد الصورة الأصلية
+        const x = Math.max(0, p1.x);
+        const y = Math.max(0, p1.y);
+        const width = Math.min(letterbox.srcW - x, p2.x - p1.x);
+        const height = Math.min(letterbox.srcH - y, p2.y - p1.y);
 
-            bestBox = {
-              x: Math.round(Math.max(0, p1.x)),
-              y: Math.round(Math.max(0, p1.y)),
-              width: Math.round(Math.min(letterbox.srcW - p1.x, p2.x - p1.x)),
-              height: Math.round(Math.min(letterbox.srcH - p1.y, p2.y - p1.y)),
-              score: boxMaxScore
-            };
-          }
-        }
+        bestBox = { x, y, width, height, score };
       }
-
-      if (bestBox) {
-        console.log(`[YOLOv8AI] تم كشف المستند بنسبة ثقة: ${(bestBox.score * 100).toFixed(1)}%`);
-        const corners = [
-          { x: bestBox.x, y: bestBox.y },
-          { x: bestBox.x + bestBox.width, y: bestBox.y },
-          { x: bestBox.x + bestBox.width, y: bestBox.y + bestBox.height },
-          { x: bestBox.x, y: bestBox.y + bestBox.height }
-        ];
-        return { corners, score: bestBox.score };
-      }
-      return null;
     }
 
-    throw new Error('لم أستطع تفسير مخرجات الموديل الحالي. الأبعاد: ' + JSON.stringify(dims));
+    if (bestBox) {
+      console.log(`[YOLOv8AI] تم كشف إطار المستند بنسبة ثقة: ${(bestBox.score * 100).toFixed(1)}%`);
+      // تحويل الصندوق المحيط إلى 4 زوايا لدعم دالة apply/warp
+      const corners = [
+        { x: Math.round(bestBox.x), y: Math.round(bestBox.y) },
+        { x: Math.round(bestBox.x + bestBox.width), y: Math.round(bestBox.y) },
+        { x: Math.round(bestBox.x + bestBox.width), y: Math.round(bestBox.y + bestBox.height) },
+        { x: Math.round(bestBox.x), y: Math.round(bestBox.y + bestBox.height) }
+      ];
+      return { corners, score: bestBox.score };
+    }
+
+    console.warn('[YOLOv8AI] لم يتم العثور على مستند بحد ثقة أعلى من:', scoreThreshold);
+    return null;
   },
 
   async runDeepCropUsingYOLO() {
