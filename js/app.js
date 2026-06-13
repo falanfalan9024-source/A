@@ -1959,14 +1959,9 @@ const YOLOv8AI = {
   // YOLOv8 output decoding differs per exported model.
   // We need correct output tensor interpretation.
   // For now, this function tries common formats:
-  // 1) corners directly: [1,4,2]
-  // 2) boxes + 4 corners flattened: [1,N,8]
-  // 3) corners heatmap/keypoints: not supported without your exact output format
   postprocessYOLOResults(outputs, letterbox, scoreThreshold = 0.3) {
-    // Normalize output tensor
     const outTensor = Array.isArray(outputs) ? outputs[0] : outputs;
     const tensorByName = outputs && typeof outputs === 'object' && !Array.isArray(outputs) ? outputs : null;
-
     const t = tensorByName
       ? (outputs[this.outputNames?.[0]] || outputs[this.outputNames?.[1]] || outputs[this.outputNames?.[0]])
       : outTensor;
@@ -1975,14 +1970,8 @@ const YOLOv8AI = {
 
     const dims = Array.from(t.dims);
     const data = t.data;
-
-    // YOLOv8 exports commonly:
-    //  - [1, 4, 2] or [1, N, 8] (corners directly) -> handled below
-    //  - [1, 5, 8400]  (x,y,w,h,conf) per anchor (no classes) OR
-    //  - [1, 4+nc, 8400] (x,y,w,h,conf + class logits/probs)
-    //
-    // In your case: dataLen = 705600 => likely 84*8400 = 705600.
-    // That suggests dims ~= [1, 84, 8400] (nc=80)
+    const originalWidth = letterbox.srcW;
+    const originalHeight = letterbox.srcH;
 
     const toOriginal = (x, y) => {
       const srcX = (x - letterbox.padX) / letterbox.scale;
@@ -1990,34 +1979,69 @@ const YOLOv8AI = {
       return { x: srcX, y: srcY };
     };
 
-    // Helper: take a box and convert to 4 corners
-    const boxToCorners = (cx, cy, w, h) => {
-      // Model space coords are typically center-x/center-y with w/h.
-      // Convert to corners in letterbox space then back to original.
-      const x1 = cx - w / 2;
-      const y1 = cy - h / 2;
-      const x2 = cx + w / 2;
-      const y2 = cy + h / 2;
+    // حالة YOLOv8 بالأبعاد القياسية [1, 84, 8400]
+    if (dims.length === 3 && dims[0] === 1 && dims[2] === 8400) {
+      console.log("[YOLOv8AI] معالجة مخرجات YOLOv8 بالأبعاد [1, 84, 8400]...");
+      const numBoxes = 8400;
+      const numClasses = dims[1] - 4;
+      let bestBox = null;
+      let maxConfidence = scoreThreshold;
 
-      const tl = toOriginal(x1, y1);
-      const tr = toOriginal(x2, y1);
-      const br = toOriginal(x2, y2);
-      const bl = toOriginal(x1, y2);
-      return [tl, tr, br, bl];
-    };
+      for (let i = 0; i < numBoxes; i++) {
+        let boxMaxScore = 0;
+        for (let c = 0; c < numClasses; c++) {
+          const score = data[(4 + c) * numBoxes + i];
+          if (score > boxMaxScore) boxMaxScore = score;
+        }
 
-    // Case A: [1,4,2] => corners directly
+        if (boxMaxScore > maxConfidence) {
+          maxConfidence = boxMaxScore;
+          const cx = data[0 * numBoxes + i];
+          const cy = data[1 * numBoxes + i];
+          const w = data[2 * numBoxes + i];
+          const h = data[3 * numBoxes + i];
+
+          const p1 = toOriginal(cx - w / 2, cy - h / 2);
+          const p2 = toOriginal(cx + w / 2, cy + h / 2);
+
+          const finalX = Math.max(0, p1.x);
+          const finalY = Math.max(0, p1.y);
+          const finalWidth = Math.min(originalWidth - finalX, p2.x - p1.x);
+          const finalHeight = Math.min(originalHeight - finalY, p2.y - p1.y);
+
+          bestBox = {
+            x: Math.round(finalX),
+            y: Math.round(finalY),
+            width: Math.round(finalWidth),
+            height: Math.round(finalHeight),
+            score: boxMaxScore
+          };
+        }
+      }
+
+      if (bestBox) {
+        console.log(`[YOLOv8AI] تم العثور على أفضل صندوق لقص الصورة بنسبة ثقة: ${(bestBox.score * 100).toFixed(2)}%`, bestBox);
+        const corners = [
+          { x: bestBox.x, y: bestBox.y },
+          { x: bestBox.x + bestBox.width, y: bestBox.y },
+          { x: bestBox.x + bestBox.width, y: bestBox.y + bestBox.height },
+          { x: bestBox.x, y: bestBox.y + bestBox.height }
+        ];
+        return { corners, score: bestBox.score };
+      }
+      return null;
+    }
+
+    // حالات بديلة لدعم موديلات أخرى [1,4,2]
     if (dims.length === 3 && dims[1] === 4 && dims[2] === 2) {
       const corners = [];
       for (let i = 0; i < 4; i++) {
-        const x = data[i * 2 + 0];
-        const y = data[i * 2 + 1];
-        corners.push(toOriginal(x, y));
+        corners.push(toOriginal(data[i * 2], data[i * 2 + 1]));
       }
       return { corners, score: 1 };
     }
 
-    // Case B: [1,N,8] => corners flattened
+    // حالة دعم مخرجات الزوايا المسطحة [1, N, 8]
     if (dims.length === 3 && dims[2] === 8) {
       const N = dims[1];
       let best = null;
@@ -2035,77 +2059,6 @@ const YOLOv8AI = {
         if (!best || area > best.area) best = { corners, area };
       }
       if (best) return { corners: best.corners, score: 0.5 };
-    }
-
-    // Case C: YOLOv8 dense output expected dims [1, 84, 8400]
-    // where 84 = 4(box) + 1(obj/conf) + 80(classes)
-    // and data layout is [1, ch, n] => data[c*n + i]
-    if (dims.length === 3 && dims[0] === 1) {
-        console.log("[YOLOv8AI] بدء تفكيك الـ Tensor بأبعاد [1, 84, 8400]...");
-
-        const numBoxes = dims[2];  // 8400
-        const numClasses = dims[1] - 4; // 80 (في حال كان الـ Tensor يحتوي على 84 صفاً)
-        
-        let bestBox = null;
-        let maxConfidence = scoreThreshold;
-
-        for (let i = 0; i < numBoxes; i++) {
-            let boxMaxScore = 0;
-            let classId = -1;
-
-            for (let c = 0; c < numClasses; c++) {
-                // الوصول إلى قيم الفئات بعد الصفوف الـ 4 الأولى للإحداثيات
-                const score = data[(4 + c) * numBoxes + i];
-                if (score > boxMaxScore) {
-                    boxMaxScore = score;
-                    classId = c;
-                }
-            }
-
-            if (boxMaxScore > maxConfidence) {
-                maxConfidence = boxMaxScore;
-
-                const cx = data[0 * numBoxes + i];
-                const cy = data[1 * numBoxes + i];
-                const w  = data[2 * numBoxes + i];
-                const h  = data[3 * numBoxes + i];
-
-                // تحويل الإحداثيات واستخدام helper لضمان دقة الـ Letterbox
-                const p1 = toOriginal(cx - w / 2, cy - h / 2);
-                const p2 = toOriginal(cx + w / 2, cy + h / 2);
-
-                const finalX = Math.max(0, p1.x);
-                const finalY = Math.max(0, p1.y);
-                const finalWidth = Math.min(originalWidth - finalX, p2.x - p1.x);
-                const finalHeight = Math.min(originalHeight - finalY, p2.y - p1.y);
-
-                bestBox = {
-                    x: Math.round(finalX),
-                    y: Math.round(finalY),
-                    width: Math.round(finalWidth),
-                    height: Math.round(finalHeight),
-                    score: boxMaxScore,
-                    classId: classId
-                };
-            }
-        }
-
-        if (bestBox) {
-            console.log(`[YOLOv8AI] تم العثور على أفضل صندوق لقص الصورة بنجاح بنسبة ثقة: ${(bestBox.score * 100).toFixed(2)}%`, bestBox);
-            
-            // تحويل الصندوق إلى 4 زوايا كما يتوقع المشروع
-            const corners = [
-                { x: bestBox.x, y: bestBox.y },
-                { x: bestBox.x + bestBox.width, y: bestBox.y },
-                { x: bestBox.x + bestBox.width, y: bestBox.y + bestBox.height },
-                { x: bestBox.x, y: bestBox.y + bestBox.height }
-            ];
-            return { corners, score: bestBox.score };
-        } else {
-            console.warn(`[YOLOv8AI] لم يتم العثور على أي عنصر يتجاوز نسبة الثقة المحددة (${scoreThreshold}).`);
-            return null;
-        }
-      }
     }
 
     throw new Error('لم أستطع تفسير output tensor لهذا الموديل. dims=' + JSON.stringify(dims));
