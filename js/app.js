@@ -2013,20 +2013,18 @@ const YOLOv8AI = {
   // We need correct output tensor interpretation.
   // For now, this function tries common formats:
   postprocessYOLOResults(outputs, letterbox, scoreThreshold = 0.3) {
-    // استخراج مخرجات الموديل (تكون عادةً في Tensor واحد)
+    // استخراج مخرجات الموديل (تنسيق YOLOv8 المعتاد [1, 84, 8400])
     const outName = this.outputNames ? this.outputNames[0] : Object.keys(outputs)[0];
     const t = outputs[outName] || (Array.isArray(outputs) ? outputs[0] : outputs);
 
-    if (!t || !t.dims || !t.data) {
-      throw new Error('مخرجات النموذج غير صالحة أو غير مكتملة');
-    }
+    if (!t || !t.dims || !t.data) throw new Error('مخرجات الموديل غير صالحة');
 
-    const dims = Array.from(t.dims);
+    const dims = Array.from(t.dims); // المتوقع [1, 84, 8400]
     const data = t.data;
-    const numElements = dims[1]; // 84
+    const numElements = dims[1]; // 84 (cx, cy, w, h + scores)
     const numBoxes = dims[2];    // 8400
 
-    // دالة تحويل الإحداثيات من فضاء الموديل المربّع (640x640) إلى أبعاد الصورة الأصلية
+    // دالة تحويل الإحداثيات من فضاء الموديل المربع (640x640) إلى أبعاد الصورة الأصلية
     const toOriginal = (x, y) => {
       return {
         x: (x - letterbox.padX) / letterbox.scale,
@@ -2035,56 +2033,50 @@ const YOLOv8AI = {
     };
 
     let bestBox = null;
-    let globalMaxScore = 0;
+    let maxScore = 0;
 
-    // مخرجات YOLOv8 تكون بصيغة [1, 84, 8400] (Column-major)
-    // أول 4 قيم لكل صندوق هي (cx, cy, w, h) وبقية الـ 80 قيمة هي احتمالات الفئات
+    // معالجة مخرجات YOLOv8 بتنسيق Column-major (84 صف، 8400 عمود)
     for (let i = 0; i < numBoxes; i++) {
-      // البحث عن أعلى نسبة ثقة (Max Class Score) لهذا الصندوق المحدد
-      let currentBoxMaxScore = 0;
+      // البحث عن أعلى درجة ثقة للفئات (تبدأ من الفهرس 4)
+      let boxMaxScore = 0;
       for (let c = 4; c < numElements; c++) {
-        const score = data[c * numBoxes + i];
-        if (score > currentBoxMaxScore) {
-          currentBoxMaxScore = score;
-        }
+        const s = data[c * numBoxes + i];
+        if (s > boxMaxScore) boxMaxScore = s;
       }
 
-      // اختيار الصندوق الذي يحقق أعلى ثقة إجمالية ويتجاوز حد 0.3
-      if (currentBoxMaxScore > scoreThreshold && currentBoxMaxScore > globalMaxScore) {
-        globalMaxScore = currentBoxMaxScore;
-
+      // اختيار الصندوق صاحب أعلى نسبة ثقة إجمالية بشرط تجاوز الحد 0.3
+      if (boxMaxScore > scoreThreshold && boxMaxScore > maxScore) {
+        maxScore = boxMaxScore;
         const cx = data[0 * numBoxes + i];
         const cy = data[1 * numBoxes + i];
         const w = data[2 * numBoxes + i];
         const h = data[3 * numBoxes + i];
 
-        // تحويل مركز الصندوق وأبعاده إلى نقاط (أعلى-يسار) و (أسفل-يمين) في فضاء الصورة الأصلية
-        const topLeft = toOriginal(cx - w / 2, cy - h / 2);
-        const bottomRight = toOriginal(cx + w / 2, cy + h / 2);
+        // تحويل الصندوق المحيط إلى إحداثيات الصورة الأصلية
+        const p1 = toOriginal(cx - w / 2, cy - h / 2); // Top-Left
+        const p2 = toOriginal(cx + w / 2, cy + h / 2); // Bottom-Right
 
-        // ضمان بقاء الصندوق ضمن حدود الصورة الأصلية وحساب الطول والعرض النهائي
-        const x = Math.max(0, topLeft.x);
-        const y = Math.max(0, topLeft.y);
-        const width = Math.min(letterbox.srcW - x, bottomRight.x - topLeft.x);
-        const height = Math.min(letterbox.srcH - y, bottomRight.y - topLeft.y);
+        // تقييد الصندوق ضمن حدود الصورة الأصلية
+        const x = Math.max(0, p1.x);
+        const y = Math.max(0, p1.y);
+        const width = Math.min(letterbox.srcW - x, p2.x - p1.x);
+        const height = Math.min(letterbox.srcH - y, p2.y - p1.y);
 
-        bestBox = { x, y, width, height, score: currentBoxMaxScore };
+        bestBox = { x, y, width, height, score: boxMaxScore };
       }
     }
 
     if (bestBox) {
-      console.log(`[YOLOv8AI] تم كشف المستند بنجاح. نسبة الثقة: ${(bestBox.score * 100).toFixed(1)}%`);
-      // إرجاع الزوايا الأربع بالترتيب الصحيح لعملية القص
+      console.log(`[YOLOv8AI] تم كشف المستند بنسبة ثقة: ${(bestBox.score * 100).toFixed(1)}%`);
+      // إرجاع الزوايا الأربع بالترتيب المطلوب لدالة القص وتصحيح المنظور
       const corners = [
-        { x: Math.round(bestBox.x), y: Math.round(bestBox.y) },
-        { x: Math.round(bestBox.x + bestBox.width), y: Math.round(bestBox.y) },
-        { x: Math.round(bestBox.x + bestBox.width), y: Math.round(bestBox.y + bestBox.height) },
-        { x: Math.round(bestBox.x), y: Math.round(bestBox.y + bestBox.height) }
+        { x: Math.round(bestBox.x), y: Math.round(bestBox.y) }, // Top-Left
+        { x: Math.round(bestBox.x + bestBox.width), y: Math.round(bestBox.y) }, // Top-Right
+        { x: Math.round(bestBox.x + bestBox.width), y: Math.round(bestBox.y + bestBox.height) }, // Bottom-Right
+        { x: Math.round(bestBox.x), y: Math.round(bestBox.y + bestBox.height) } // Bottom-Left
       ];
       return { corners, score: bestBox.score };
     }
-
-    console.warn('[YOLOv8AI] لم يتم العثور على وثيقة واضحة بحد ثقة أعلى من:', scoreThreshold);
     return null;
   },
 
